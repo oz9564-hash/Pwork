@@ -388,7 +388,7 @@ export function App() {
           <div
             className="sheet"
             style={{
-              gridTemplateColumns: `220px ${columns.map((column) => `${getColumnWidth(column.id)}px`).join(" ")} 150px`,
+              gridTemplateColumns: `220px ${columns.map((column) => `${getColumnWidth(column.id)}px`).join(" ")} minmax(160px, 1fr)`,
             }}
           >
             <div className="sheetCell sheetHead stickyCol">항목</div>
