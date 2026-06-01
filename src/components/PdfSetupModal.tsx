@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ChevronLeft, ChevronRight, Eye, Plus, Save, Trash2, X } from "lucide-react";
@@ -145,9 +145,25 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   const selectedRow = rows.find((row) => row.id === selectedRowId);
   const selectedValue = getAreaValue(selectedRowId);
 
-  /** 항목에 입력된 값을 우선 쓰고, 없으면 항목 라벨로 폴백한다. */
+  /** 항목에 입력된 값을 우선 쓰고, 없으면 항목 라벨로 폴백한다. (측정·배치 미리보기용) */
   function getAreaValue(rowId: string) {
     return column.values[rowId] || rows.find((row) => row.id === rowId)?.label || "";
+  }
+
+  /** 화면 표시용 원본 값. 값이 없으면 빈 문자열을 그대로 둔다. */
+  function getDisplayValue(rowId: string) {
+    return column.values[rowId] ?? "";
+  }
+
+  /** 화면 표시용 항목 라벨. 없으면 "항목"으로 폴백한다. */
+  function getDisplayLabel(rowId: string) {
+    return rows.find((row) => row.id === rowId)?.label ?? "항목";
+  }
+
+  function handleHoverMove(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!selectedRowId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
   }
 
   function addAreaAt(clientX?: number, clientY?: number) {
@@ -345,78 +361,25 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
               {loading ? <div className="loading">PDF 로딩 중</div> : null}
               <div className="pdfCanvasBox" style={{ width: size.width, height: size.height }}>
                 <canvas ref={canvasRef} />
-                <div
-                  className={previewMode ? "areaOverlay previewing" : "areaOverlay"}
-                  ref={overlayRef}
-                  onMouseMove={(event) => {
-                    if (previewMode || !selectedRowId) return;
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
-                  }}
-                  onMouseLeave={() => setHoverPoint(null)}
-                  onClick={(event) => {
-                    if (!previewMode && event.target === event.currentTarget) addAreaAt(event.clientX, event.clientY);
-                  }}
-                >
-                  {!previewMode && hoverPoint && selectedValue ? (
-                    <div
-                      className="placementPreview"
-                      style={{
-                        left: hoverPoint.x,
-                        top: hoverPoint.y,
-                        fontSize: DEFAULT_FONT_SIZE * DISPLAY_SCALE,
-                      }}
-                    >
-                      {selectedValue}
-                    </div>
-                  ) : null}
-                  {pageAreas.map((area) => {
-                    const label = rows.find((row) => row.id === area.rowId)?.label ?? "항목";
-                    const value = column.values[area.rowId] ?? "";
-                    return (
-                      <div
-                        className={[
-                          "mappedArea",
-                          area.id === selectedAreaId ? "selected" : "",
-                          previewMode ? "preview" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        key={area.id}
-                        style={{
-                          left: area.x * size.width,
-                          top: area.y * size.height,
-                          width: area.width * size.width,
-                          height: area.height * size.height,
-                          fontSize: area.fontSize * DISPLAY_SCALE,
-                        }}
-                        onPointerDown={(event) => {
-                          if (!previewMode) startDrag(event, area);
-                        }}
-                      >
-                        {previewMode ? (
-                          <span>{value}</span>
-                        ) : (
-                          <>
-                            <span>{value || label}</span>
-                            <button
-                              type="button"
-                              className="areaDeleteButton"
-                              title="영역 삭제"
-                              onPointerDown={(event) => event.stopPropagation()}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                removeArea(area.id);
-                              }}
-                            >
-                              ×
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                {previewMode ? (
+                  <PreviewAreaLayer areas={pageAreas} size={size} getValue={getDisplayValue} />
+                ) : (
+                  <EditAreaLayer
+                    overlayRef={overlayRef}
+                    areas={pageAreas}
+                    size={size}
+                    selectedAreaId={selectedAreaId}
+                    hoverPoint={hoverPoint}
+                    placementValue={selectedValue}
+                    onHoverMove={handleHoverMove}
+                    onHoverLeave={() => setHoverPoint(null)}
+                    onAddAt={addAreaAt}
+                    onStartDrag={startDrag}
+                    onRemoveArea={removeArea}
+                    getValue={getDisplayValue}
+                    getLabel={getDisplayLabel}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -442,6 +405,118 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
           </div>
         </footer>
       </section>
+    </div>
+  );
+}
+
+type Size = { width: number; height: number };
+
+/** 정규화된 영역(0~1)을 현재 캔버스 픽셀 좌표/크기로 환산한 인라인 스타일. */
+function areaStyle(area: PdfArea, size: Size) {
+  return {
+    left: area.x * size.width,
+    top: area.y * size.height,
+    width: area.width * size.width,
+    height: area.height * size.height,
+    fontSize: area.fontSize * DISPLAY_SCALE,
+  };
+}
+
+type PreviewAreaLayerProps = {
+  areas: PdfArea[];
+  size: Size;
+  getValue: (rowId: string) => string;
+};
+
+/** 미리보기 모드: 상호작용 없이 각 영역의 값만 그대로 표시한다. */
+function PreviewAreaLayer({ areas, size, getValue }: PreviewAreaLayerProps) {
+  return (
+    <div className="areaOverlay previewing">
+      {areas.map((area) => (
+        <div className="mappedArea preview" key={area.id} style={areaStyle(area, size)}>
+          <span>{getValue(area.rowId)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+type EditAreaLayerProps = {
+  overlayRef: RefObject<HTMLDivElement | null>;
+  areas: PdfArea[];
+  size: Size;
+  selectedAreaId: string;
+  hoverPoint: { x: number; y: number } | null;
+  placementValue: string;
+  onHoverMove: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  onHoverLeave: () => void;
+  onAddAt: (clientX: number, clientY: number) => void;
+  onStartDrag: (event: ReactPointerEvent, area: PdfArea) => void;
+  onRemoveArea: (id: string) => void;
+  getValue: (rowId: string) => string;
+  getLabel: (rowId: string) => string;
+};
+
+/** 편집 모드: 클릭으로 영역 추가, 드래그 이동, 호버 배치 미리보기, 개별 삭제를 처리한다. */
+function EditAreaLayer({
+  overlayRef,
+  areas,
+  size,
+  selectedAreaId,
+  hoverPoint,
+  placementValue,
+  onHoverMove,
+  onHoverLeave,
+  onAddAt,
+  onStartDrag,
+  onRemoveArea,
+  getValue,
+  getLabel,
+}: EditAreaLayerProps) {
+  return (
+    <div
+      className="areaOverlay"
+      ref={overlayRef}
+      onMouseMove={onHoverMove}
+      onMouseLeave={onHoverLeave}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onAddAt(event.clientX, event.clientY);
+      }}
+    >
+      {hoverPoint && placementValue ? (
+        <div
+          className="placementPreview"
+          style={{
+            left: hoverPoint.x,
+            top: hoverPoint.y,
+            fontSize: DEFAULT_FONT_SIZE * DISPLAY_SCALE,
+          }}
+        >
+          {placementValue}
+        </div>
+      ) : null}
+      {areas.map((area) => (
+        <div
+          className={["mappedArea", area.id === selectedAreaId ? "selected" : ""].filter(Boolean).join(" ")}
+          key={area.id}
+          style={areaStyle(area, size)}
+          onPointerDown={(event) => onStartDrag(event, area)}
+        >
+          <span>{getValue(area.rowId) || getLabel(area.rowId)}</span>
+          <button
+            type="button"
+            className="areaDeleteButton"
+            title="영역 삭제"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemoveArea(area.id);
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
     </div>
   );
 }
