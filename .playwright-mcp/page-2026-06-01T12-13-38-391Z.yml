@@ -1,0 +1,20 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "PDF 텍스트 매퍼" [level=1] [ref=e6]
+      - paragraph [ref=e7]: 각 열을 독립 작업 세트로 관리합니다.
+    - generic [ref=e8]:
+      - button "항목" [ref=e9] [cursor=pointer]:
+        - img [ref=e10]
+        - text: 항목
+      - button "값 열" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+        - text: 값 열
+      - generic [ref=e13]:
+        - img [ref=e14]
+        - text: 폰트
+  - generic [ref=e18]: 열마다 값과 PDF가 독립 저장됩니다.
+  - generic [ref=e19]:
+    - img [ref=e20]
+    - generic [ref=e23]: 엑셀형 작업 표가 없습니다.
+    - button "기본 표 만들기" [ref=e24] [cursor=pointer]

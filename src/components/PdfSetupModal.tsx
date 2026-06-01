@@ -1,0 +1,432 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
+import * as pdfjsLib from "pdfjs-dist";
+import type { PDFDocumentProxy } from "pdfjs-dist";
+import { ChevronLeft, ChevronRight, Eye, Plus, Save, Trash2, X } from "lucide-react";
+import { createId } from "../lib/ids";
+import { localRepository } from "../services/storage";
+import type { ColumnPdf, FieldRow, FontAsset, PdfArea, ValueColumn } from "../types";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.mjs",
+  import.meta.url,
+).toString();
+
+type DragState = {
+  id: string;
+  startClientX: number;
+  startClientY: number;
+  startArea: PdfArea;
+};
+
+type Props = {
+  column: ValueColumn;
+  pdf: ColumnPdf;
+  rows: FieldRow[];
+  font?: FontAsset;
+  onClose: () => void;
+  onSaved: (areas: PdfArea[]) => void;
+};
+
+export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DragState | null>(null);
+
+  const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy>();
+  const [page, setPage] = useState(1);
+  const [pageCount, setPageCount] = useState(1);
+  const [size, setSize] = useState({ width: 1, height: 1 });
+  const [areas, setAreas] = useState<PdfArea[]>([]);
+  const [selectedRowId, setSelectedRowId] = useState("");
+  const [selectedAreaId, setSelectedAreaId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [previewMode, setPreviewMode] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadPdf() {
+      setLoading(true);
+      const [loadedAreas, bytes] = await Promise.all([
+        localRepository.getAreas(pdf.id),
+        pdf.file.arrayBuffer(),
+      ]);
+      const loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+
+      if (!alive) return;
+      setAreas(loadedAreas);
+      setPdfDocument(loadedDocument);
+      setPageCount(loadedDocument.numPages);
+      setSelectedRowId(rows[0]?.id ?? "");
+      setLoading(false);
+    }
+
+    void loadPdf();
+    return () => {
+      alive = false;
+    };
+  }, [pdf, rows]);
+
+  useEffect(() => {
+    if (!pdfDocument) return;
+
+    let cancelled = false;
+
+    async function renderPage() {
+      const canvas = canvasRef.current;
+      if (!canvas || !pdfDocument) return;
+
+      const loadedPage = await pdfDocument.getPage(page);
+      const viewport = loadedPage.getViewport({ scale: 1.35 });
+      const context = canvas.getContext("2d");
+      if (!context || cancelled) return;
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      setSize({ width: viewport.width, height: viewport.height });
+
+      await loadedPage.render({ canvasContext: context, viewport }).promise;
+    }
+
+    void renderPage();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDocument, page]);
+
+  useEffect(() => {
+    function onPointerMove(event: PointerEvent) {
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      const dx = (event.clientX - drag.startClientX) / size.width;
+      const dy = (event.clientY - drag.startClientY) / size.height;
+
+      setAreas((current) =>
+        current.map((area) => {
+          if (area.id !== drag.id) return area;
+
+          return {
+            ...area,
+            x: clamp(drag.startArea.x + dx, 0, 1 - drag.startArea.width),
+            y: clamp(drag.startArea.y + dy, 0, 1 - drag.startArea.height),
+          };
+        }),
+      );
+    }
+
+    function onPointerUp() {
+      dragRef.current = null;
+    }
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [size]);
+
+  const normalizedAreas = useMemo(
+    () => areas.map((area) => resizeAreaToText(area)),
+    [areas, column.values, rows, size],
+  );
+  const pageAreas = useMemo(() => normalizedAreas.filter((area) => area.page === page), [normalizedAreas, page]);
+  const selectedArea = areas.find((area) => area.id === selectedAreaId);
+  const selectedRow = rows.find((row) => row.id === selectedRowId);
+
+  function addAreaAt(clientX?: number, clientY?: number) {
+    if (previewMode) return;
+    if (!selectedRowId) return;
+
+    const overlay = overlayRef.current;
+    const rect = overlay?.getBoundingClientRect();
+    const row = rows.find((item) => item.id === selectedRowId);
+    const value = column.values[selectedRowId] || row?.label || "";
+    const width = measureAreaWidth(value, 11, size.width);
+    const height = measureAreaHeight(11, size.height);
+    const x = rect && clientX ? (clientX - rect.left) / rect.width - width / 2 : 0.39;
+    const y = rect && clientY ? (clientY - rect.top) / rect.height - height / 2 : 0.45;
+
+    const area: PdfArea = {
+      id: createId("area"),
+      columnPdfId: pdf.id,
+      rowId: selectedRowId,
+      page,
+      x: clamp(x, 0, 1 - width),
+      y: clamp(y, 0, 1 - height),
+      width,
+      height,
+      fontSize: 11,
+    };
+
+    setAreas((current) => [...current, area]);
+    setSelectedAreaId(area.id);
+  }
+
+  function startDrag(event: ReactPointerEvent, area: PdfArea) {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedAreaId(area.id);
+    dragRef.current = {
+      id: area.id,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startArea: area,
+    };
+  }
+
+  function updateSelectedArea(patch: Partial<PdfArea>) {
+    if (!selectedAreaId) return;
+    setAreas((current) =>
+      current.map((area) => {
+        if (area.id !== selectedAreaId) return area;
+        const next = { ...area, ...patch };
+        return resizeAreaToText(next);
+      }),
+    );
+  }
+
+  function resizeAreaToText(area: PdfArea) {
+    const row = rows.find((item) => item.id === area.rowId);
+    const value = column.values[area.rowId] || row?.label || "";
+    const width = measureAreaWidth(value, area.fontSize, size.width);
+    const height = measureAreaHeight(area.fontSize, size.height);
+
+    return {
+      ...area,
+      width,
+      height,
+      x: clamp(area.x, 0, 1 - width),
+      y: clamp(area.y, 0, 1 - height),
+    };
+  }
+
+  function removeSelectedArea() {
+    if (!selectedAreaId) return;
+    setAreas((current) => current.filter((area) => area.id !== selectedAreaId));
+    setSelectedAreaId("");
+  }
+
+  async function save() {
+    await localRepository.replaceAreas(pdf.id, normalizedAreas);
+    onSaved(normalizedAreas);
+    onClose();
+  }
+
+  async function preview() {
+    setPreviewMode((current) => !current);
+  }
+
+  return (
+    <div className="modalBackdrop" role="dialog" aria-modal="true">
+      <section className="modal">
+        <header className="modalHeader">
+          <div>
+            <h2>
+              {column.name} / {pdf.name}
+            </h2>
+            <p>왼쪽 항목을 선택한 뒤 PDF 위를 클릭하면 이 열 전용 영역이 추가됩니다.</p>
+          </div>
+          <button className="iconButton" type="button" onClick={onClose} title="닫기">
+            <X size={20} />
+          </button>
+        </header>
+
+        <div className="setupLayout">
+          <aside className="fieldRail">
+            <div className="railTitle">이 열의 값</div>
+            <div className="fieldList">
+              {rows.map((row) => (
+                <button
+                  className={row.id === selectedRowId ? "fieldButton active" : "fieldButton"}
+                  key={row.id}
+                  type="button"
+                  onClick={() => setSelectedRowId(row.id)}
+                >
+                  <span>{row.label || "항목 없음"}</span>
+                  <strong>{column.values[row.id] || "값 없음"}</strong>
+                </button>
+              ))}
+            </div>
+            <button
+              className="button primary full"
+              type="button"
+              disabled={!selectedRowId || previewMode}
+              onClick={() => addAreaAt()}
+            >
+              <Plus size={16} />
+              영역 추가
+            </button>
+
+            <div className="areaEditor">
+              <div className="railTitle">선택 영역</div>
+              {selectedArea ? (
+                <>
+                  <label>
+                    연결 항목
+                    <select
+                      value={selectedArea.rowId}
+                      disabled={previewMode}
+                      onChange={(event) => updateSelectedArea({ rowId: event.target.value })}
+                    >
+                      {rows.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.label || "항목 없음"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    글자 크기
+                    <input
+                      type="number"
+                      min={6}
+                      max={48}
+                      value={selectedArea.fontSize}
+                      disabled={previewMode}
+                      onChange={(event) => updateSelectedArea({ fontSize: Number(event.target.value) })}
+                    />
+                  </label>
+                  <button className="button danger full" type="button" disabled={previewMode} onClick={removeSelectedArea}>
+                    <Trash2 size={16} />
+                    영역 삭제
+                  </button>
+                </>
+              ) : (
+                <p>PDF 위 영역을 선택하세요.</p>
+              )}
+            </div>
+          </aside>
+
+          <div className="pdfStageWrap">
+            <div className="pageToolbar">
+              <button
+                className="iconButton"
+                type="button"
+                disabled={page <= 1}
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                title="이전 페이지"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <span>
+                {page} / {pageCount}
+              </span>
+              <button
+                className="iconButton"
+                type="button"
+                disabled={page >= pageCount}
+                onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+                title="다음 페이지"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+
+            <div className="pdfScroll">
+              {loading ? <div className="loading">PDF 로딩 중</div> : null}
+              <div className="pdfCanvasBox" style={{ width: size.width, height: size.height }}>
+                <canvas ref={canvasRef} />
+                <div
+                  className={previewMode ? "areaOverlay previewing" : "areaOverlay"}
+                  ref={overlayRef}
+                  onClick={(event) => {
+                    if (!previewMode && event.target === event.currentTarget) addAreaAt(event.clientX, event.clientY);
+                  }}
+                >
+                  {pageAreas.map((area) => {
+                    const label = rows.find((row) => row.id === area.rowId)?.label ?? "항목";
+                    const value = column.values[area.rowId] ?? "";
+                    return (
+                      <div
+                        className={[
+                          "mappedArea",
+                          area.id === selectedAreaId ? "selected" : "",
+                          previewMode ? "preview" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        key={area.id}
+                        style={{
+                          left: area.x * size.width,
+                          top: area.y * size.height,
+                          width: area.width * size.width,
+                          height: area.height * size.height,
+                          fontSize: area.fontSize * 1.35,
+                        }}
+                        onPointerDown={(event) => {
+                          if (!previewMode) startDrag(event, area);
+                        }}
+                      >
+                        {previewMode ? (
+                          <span>{value}</span>
+                        ) : (
+                          <>
+                            <span>{value || label}</span>
+                            <button
+                              type="button"
+                              className="areaDeleteButton"
+                              title="영역 삭제"
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setAreas((current) => current.filter((item) => item.id !== area.id));
+                                if (selectedAreaId === area.id) setSelectedAreaId("");
+                              }}
+                            >
+                              ×
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <footer className="modalFooter">
+          <span>
+            현재 영역 {normalizedAreas.length}개
+            {selectedRow ? ` · 선택 항목: ${selectedRow.label || "항목 없음"}` : ""}
+          </span>
+          <div>
+            <button className="button secondary" type="button" disabled={normalizedAreas.length === 0} onClick={() => void preview()}>
+              <Eye size={16} />
+              {previewMode ? "편집 보기" : "미리보기"}
+            </button>
+            <button className="button secondary" type="button" onClick={onClose}>
+              닫기
+            </button>
+            <button className="button primary" type="button" disabled={normalizedAreas.length === 0} onClick={() => void save()}>
+              <Save size={16} />
+              저장 후 세팅 완료
+            </button>
+          </div>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
+  const displayFontSize = fontSize * 1.35;
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  context!.font = `${displayFontSize}px LocalBatang, Batang, serif`;
+  const measuredWidth = context?.measureText(text).width ?? text.length * displayFontSize;
+  const pixelWidth = Math.max(18, measuredWidth + 14);
+  return clamp(pixelWidth / pageWidth, 0.02, 0.9);
+}
+
+function measureAreaHeight(fontSize: number, pageHeight: number) {
+  return clamp((fontSize * 1.55) / pageHeight, 0.001, 0.12);
+}
