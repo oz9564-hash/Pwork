@@ -593,11 +593,26 @@ button:disabled {
 }
 
 .areaOverlay {
-  cursor: crosshair;
+  cursor: default;
 }
 
 .areaOverlay.previewing {
   cursor: default;
+}
+
+.placementPreview {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  border: 1px dashed #2563eb;
+  background: rgb(239 246 255 / 0.72);
+  color: #1d4ed8;
+  padding: 1px 3px;
+  font-family: "LocalBatang", Batang, serif;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .mappedArea {

@@ -12,6 +12,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
+/** PDF 원본 대비 화면에 렌더링하는 배율. 캔버스 viewport와 글자 크기 환산에 함께 쓰인다. */
+const DISPLAY_SCALE = 1.35;
+/** 새 영역을 추가할 때의 기본 글자 크기(pt). */
+const DEFAULT_FONT_SIZE = 11;
+/** 영역 너비 측정 시 사용하는 글꼴. 실제 PDF 출력 글꼴과 맞춰야 측정이 정확하다. */
+const AREA_FONT_FAMILY = "LocalBatang, Batang, serif";
+
 type DragState = {
   id: string;
   startClientX: number;
@@ -42,6 +49,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   const [selectedAreaId, setSelectedAreaId] = useState("");
   const [loading, setLoading] = useState(true);
   const [previewMode, setPreviewMode] = useState(false);
+  const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -78,7 +86,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
       if (!canvas || !pdfDocument) return;
 
       const loadedPage = await pdfDocument.getPage(page);
-      const viewport = loadedPage.getViewport({ scale: 1.35 });
+      const viewport = loadedPage.getViewport({ scale: DISPLAY_SCALE });
       const context = canvas.getContext("2d");
       if (!context || cancelled) return;
 
@@ -135,6 +143,12 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   const pageAreas = useMemo(() => normalizedAreas.filter((area) => area.page === page), [normalizedAreas, page]);
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
   const selectedRow = rows.find((row) => row.id === selectedRowId);
+  const selectedValue = getAreaValue(selectedRowId);
+
+  /** 항목에 입력된 값을 우선 쓰고, 없으면 항목 라벨로 폴백한다. */
+  function getAreaValue(rowId: string) {
+    return column.values[rowId] || rows.find((row) => row.id === rowId)?.label || "";
+  }
 
   function addAreaAt(clientX?: number, clientY?: number) {
     if (previewMode) return;
@@ -142,10 +156,9 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
 
     const overlay = overlayRef.current;
     const rect = overlay?.getBoundingClientRect();
-    const row = rows.find((item) => item.id === selectedRowId);
-    const value = column.values[selectedRowId] || row?.label || "";
-    const width = measureAreaWidth(value, 11, size.width);
-    const height = measureAreaHeight(11, size.height);
+    const value = getAreaValue(selectedRowId);
+    const width = measureAreaWidth(value, DEFAULT_FONT_SIZE, size.width);
+    const height = measureAreaHeight(DEFAULT_FONT_SIZE, size.height);
     const x = rect && clientX ? (clientX - rect.left) / rect.width - width / 2 : 0.39;
     const y = rect && clientY ? (clientY - rect.top) / rect.height - height / 2 : 0.45;
 
@@ -158,7 +171,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
       y: clamp(y, 0, 1 - height),
       width,
       height,
-      fontSize: 11,
+      fontSize: DEFAULT_FONT_SIZE,
     };
 
     setAreas((current) => [...current, area]);
@@ -189,8 +202,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   }
 
   function resizeAreaToText(area: PdfArea) {
-    const row = rows.find((item) => item.id === area.rowId);
-    const value = column.values[area.rowId] || row?.label || "";
+    const value = getAreaValue(area.rowId);
     const width = measureAreaWidth(value, area.fontSize, size.width);
     const height = measureAreaHeight(area.fontSize, size.height);
 
@@ -203,10 +215,9 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
     };
   }
 
-  function removeSelectedArea() {
-    if (!selectedAreaId) return;
-    setAreas((current) => current.filter((area) => area.id !== selectedAreaId));
-    setSelectedAreaId("");
+  function removeArea(id: string) {
+    setAreas((current) => current.filter((area) => area.id !== id));
+    setSelectedAreaId((current) => (current === id ? "" : current));
   }
 
   async function save() {
@@ -215,7 +226,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
     onClose();
   }
 
-  async function preview() {
+  function togglePreview() {
     setPreviewMode((current) => !current);
   }
 
@@ -289,7 +300,12 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
                       onChange={(event) => updateSelectedArea({ fontSize: Number(event.target.value) })}
                     />
                   </label>
-                  <button className="button danger full" type="button" disabled={previewMode} onClick={removeSelectedArea}>
+                  <button
+                    className="button danger full"
+                    type="button"
+                    disabled={previewMode}
+                    onClick={() => removeArea(selectedAreaId)}
+                  >
                     <Trash2 size={16} />
                     영역 삭제
                   </button>
@@ -332,10 +348,28 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
                 <div
                   className={previewMode ? "areaOverlay previewing" : "areaOverlay"}
                   ref={overlayRef}
+                  onMouseMove={(event) => {
+                    if (previewMode || !selectedRowId) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+                  }}
+                  onMouseLeave={() => setHoverPoint(null)}
                   onClick={(event) => {
                     if (!previewMode && event.target === event.currentTarget) addAreaAt(event.clientX, event.clientY);
                   }}
                 >
+                  {!previewMode && hoverPoint && selectedValue ? (
+                    <div
+                      className="placementPreview"
+                      style={{
+                        left: hoverPoint.x,
+                        top: hoverPoint.y,
+                        fontSize: DEFAULT_FONT_SIZE * DISPLAY_SCALE,
+                      }}
+                    >
+                      {selectedValue}
+                    </div>
+                  ) : null}
                   {pageAreas.map((area) => {
                     const label = rows.find((row) => row.id === area.rowId)?.label ?? "항목";
                     const value = column.values[area.rowId] ?? "";
@@ -354,7 +388,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
                           top: area.y * size.height,
                           width: area.width * size.width,
                           height: area.height * size.height,
-                          fontSize: area.fontSize * 1.35,
+                          fontSize: area.fontSize * DISPLAY_SCALE,
                         }}
                         onPointerDown={(event) => {
                           if (!previewMode) startDrag(event, area);
@@ -372,8 +406,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
                               onPointerDown={(event) => event.stopPropagation()}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                setAreas((current) => current.filter((item) => item.id !== area.id));
-                                if (selectedAreaId === area.id) setSelectedAreaId("");
+                                removeArea(area.id);
                               }}
                             >
                               ×
@@ -395,7 +428,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
             {selectedRow ? ` · 선택 항목: ${selectedRow.label || "항목 없음"}` : ""}
           </span>
           <div>
-            <button className="button secondary" type="button" disabled={normalizedAreas.length === 0} onClick={() => void preview()}>
+            <button className="button secondary" type="button" disabled={normalizedAreas.length === 0} onClick={togglePreview}>
               <Eye size={16} />
               {previewMode ? "편집 보기" : "미리보기"}
             </button>
@@ -418,10 +451,10 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
-  const displayFontSize = fontSize * 1.35;
+  const displayFontSize = fontSize * DISPLAY_SCALE;
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
-  context!.font = `${displayFontSize}px LocalBatang, Batang, serif`;
+  context!.font = `${displayFontSize}px ${AREA_FONT_FAMILY}`;
   const measuredWidth = context?.measureText(text).width ?? text.length * displayFontSize;
   const pixelWidth = Math.max(18, measuredWidth + 14);
   return clamp(pixelWidth / pageWidth, 0.02, 0.9);
