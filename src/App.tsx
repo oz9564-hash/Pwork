@@ -29,7 +29,12 @@ type ActiveSetup = {
   pdf: ColumnPdf;
 };
 
-const initialRows = ["?대쫫", "鍮꾨?踰덊샇"];
+type BusyFeedback = {
+  title: string;
+  description: string;
+};
+
+const initialRows = ["이름", "비밀번호"];
 
 export function App() {
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
@@ -41,7 +46,8 @@ export function App() {
   const [font, setFont] = useState<FontAsset>();
   const [activeSetup, setActiveSetup] = useState<ActiveSetup>();
   const [busyId, setBusyId] = useState<string>();
-  // undefined = ?몄쬆 ?뺤씤 以? null = 濡쒓렇?꾩썐 ?곹깭, User = 濡쒓렇?몃맖
+  const [busyFeedback, setBusyFeedback] = useState<BusyFeedback>();
+  // undefined = 인증 확인 중, null = 로그아웃 상태, User = 로그인됨
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
 
@@ -54,7 +60,8 @@ export function App() {
       void load();
       return;
     }
-    // 濡쒓렇?꾩썐 ??硫붾え由ъ뿉 ?⑥? ?곗씠??鍮꾩슦湲?    setRows([]);
+    // 로그아웃 시 메모리에 남은 데이터를 비운다.
+    setRows([]);
     setColumns([]);
     setPdfRows([]);
     setPdfs([]);
@@ -122,7 +129,7 @@ export function App() {
     }));
     const column: ValueColumn = {
       id: createId("col"),
-      name: "媛?A",
+      name: "값 A",
       values: {
         [nextRows[0].id]: "홍길동",
         [nextRows[1].id]: "1113",
@@ -196,7 +203,7 @@ export function App() {
     const index = columns.length;
     const column: ValueColumn = {
       id: createId("col"),
-      name: `媛?${String.fromCharCode(65 + index)}`,
+      name: `값 ${String.fromCharCode(65 + index)}`,
       values: {},
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -206,50 +213,63 @@ export function App() {
   }
 
   async function duplicateColumn(source: ValueColumn) {
-    const now = Date.now();
-    let copiedColumn: ValueColumn = {
-      id: createId("col"),
-      name: `${source.name} 蹂듭궗`,
-      values: { ...source.values },
-      images: {},
-      createdAt: now,
-      updatedAt: now,
-    };
+    setBusyId(source.id);
+    setBusyFeedback({
+      title: `${source.name} 열 복사 중`,
+      description: "값, 이미지, PDF 설정을 복사하고 있습니다.",
+    });
 
-    await repository.saveColumn(copiedColumn);
-
-    for (const [rowId, image] of Object.entries(source.images ?? {})) {
-      const file = await repository.getCellImageFile(source.id, rowId, image);
-      copiedColumn = await repository.saveCellImage(copiedColumn, rowId, file, image);
-    }
-
-    const sourcePdfs = await repository.getColumnPdfs(source.id);
-    const copiedPdfs: ColumnPdf[] = [];
-
-    for (const sourcePdf of sourcePdfs) {
-      const file = await repository.getColumnPdfFile(sourcePdf.id);
-      const copiedPdf: ColumnPdf = {
-        ...sourcePdf,
-        id: createId("pdf"),
-        columnId: copiedColumn.id,
-        file,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+    try {
+      const now = Date.now();
+      let copiedColumn: ValueColumn = {
+        id: createId("col"),
+        name: `${source.name} 복사`,
+        values: { ...source.values },
+        images: {},
+        createdAt: now,
+        updatedAt: now,
       };
-      await repository.saveColumnPdf(copiedPdf);
-      copiedPdfs.push({ ...copiedPdf, file: undefined });
 
-      const sourceAreas = await repository.getAreas(sourcePdf.id);
-      const copiedAreas = sourceAreas.map((area): PdfArea => ({
-        ...area,
-        id: createId("area"),
-        columnPdfId: copiedPdf.id,
-      }));
-      await repository.replaceAreas(copiedPdf.id, copiedAreas);
+      await repository.saveColumn(copiedColumn);
+
+      for (const [rowId, image] of Object.entries(source.images ?? {})) {
+        const file = await repository.getCellImageFile(source.id, rowId, image);
+        copiedColumn = await repository.saveCellImage(copiedColumn, rowId, file, image);
+      }
+
+      const sourcePdfs = await repository.getColumnPdfs(source.id);
+      const copiedPdfs: ColumnPdf[] = [];
+
+      for (const sourcePdf of sourcePdfs) {
+        const file = await repository.getColumnPdfFile(sourcePdf.id);
+        const copiedPdf: ColumnPdf = {
+          ...sourcePdf,
+          id: createId("pdf"),
+          columnId: copiedColumn.id,
+          file,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        await repository.saveColumnPdf(copiedPdf);
+        copiedPdfs.push({ ...copiedPdf, file: undefined });
+
+        const sourceAreas = await repository.getAreas(sourcePdf.id);
+        const copiedAreas = sourceAreas.map((area): PdfArea => ({
+          ...area,
+          id: createId("area"),
+          columnPdfId: copiedPdf.id,
+        }));
+        await repository.replaceAreas(copiedPdf.id, copiedAreas);
+      }
+
+      setColumns((current) => [...current, copiedColumn]);
+      setPdfs((current) => [...current, ...copiedPdfs]);
+    } catch (error) {
+      console.error("[column-duplicate] failed", error);
+    } finally {
+      setBusyId(undefined);
+      setBusyFeedback(undefined);
     }
-
-    setColumns((current) => [...current, copiedColumn]);
-    setPdfs((current) => [...current, ...copiedPdfs]);
   }
 
   async function updateColumnName(columnId: string, name: string) {
@@ -402,6 +422,10 @@ export function App() {
     }
 
     setBusyId(column.id);
+    setBusyFeedback({
+      title: `${column.name} PDF 다운로드 중`,
+      description: "완료될 때까지 기다려주세요.",
+    });
     try {
       for (const pdf of columnPdfs) {
         const [areas, file] = await Promise.all([
@@ -423,6 +447,7 @@ export function App() {
       console.error("[pdf-column-download] failed", error);
     } finally {
       setBusyId(undefined);
+      setBusyFeedback(undefined);
     }
   }
 
@@ -458,8 +483,8 @@ export function App() {
           <span className="brandMark" aria-hidden="true">
             <FileText size={24} />
           </span>
-          <h1>PDF ?띿뒪??留ㅽ띁</h1>
-          <p>濡쒓렇?명븯硫??대뒓 湲곌린?먯꽌??媛숈? ?묒뾽 ?곗씠?곕? 遺덈윭?????덉뒿?덈떎.</p>
+          <h1>PDF 텍스트 매퍼</h1>
+          <p>로그인하면 어느 기기에서나 같은 작업 데이터를 불러올 수 있습니다.</p>
           <button className="button primary" type="button" disabled={authBusy} onClick={() => void handleSignIn()}>
             {authBusy ? "로그인 중" : "Google로 로그인"}
           </button>
@@ -476,12 +501,12 @@ export function App() {
             <FileText size={20} />
           </span>
           <div className="brandText">
-            <h1>PDF ?띿뒪??留ㅽ띁</h1>
-            <p>媛??댁쓣 ?낅┰ ?묒뾽 ?명듃濡?愿由ы빀?덈떎.</p>
+            <h1>PDF 텍스트 매퍼</h1>
+            <p>값 열을 입력해 작업 세트로 관리합니다.</p>
           </div>
         </div>
-        <div className="workspaceSummary" aria-label="?묒뾽 ?꾪솴">
-          <span>{rows.length}媛???ぉ</span>
+        <div className="workspaceSummary" aria-label="작업 현황">
+          <span>{rows.length}개 항목</span>
           <span>{columns.length}개 열</span>
           <span>{totalMappedPdfs}/{pdfs.length} PDF</span>
           {user ? (
@@ -500,9 +525,10 @@ export function App() {
       {rows.length === 0 && columns.length === 0 ? (
         <section className="emptySheet">
           <FileText size={24} />
-          <span>?묒????묒뾽 ?쒓? ?놁뒿?덈떎.</span>
+          <span>아직 작업 표가 없습니다.</span>
           <button className="button primary" type="button" onClick={() => void createStarterSheet()}>
-            湲곕낯 ??留뚮뱾湲?          </button>
+            기본 표 만들기
+          </button>
         </section>
       ) : (
         <section className="sheetWrap">
@@ -512,26 +538,31 @@ export function App() {
               gridTemplateColumns: `220px ${columns.map((column) => `${getColumnWidth(column.id)}px`).join(" ")} minmax(160px, 1fr)`,
             }}
           >
-            <div className="sheetCell sheetHead stickyCol">??ぉ</div>
+            <div className="sheetCell sheetHead stickyCol">항목</div>
             {columns.map((column) => (
               <div className="sheetCell sheetHead columnHead" key={column.id}>
                 <input
                   value={column.name}
-                  aria-label="???대쫫"
+                  aria-label="열 이름"
                   onChange={(event) => void updateColumnName(column.id, event.target.value)}
                 />
                 <div className="columnTools">
-                  <button type="button" title="??蹂듭궗" onClick={() => void duplicateColumn(column)}>
+                  <button
+                    type="button"
+                    title="열 복사"
+                    disabled={busyId === column.id}
+                    onClick={() => void duplicateColumn(column)}
+                  >
                     <Copy size={15} />
                   </button>
-                  <button type="button" title="????젣" onClick={() => void deleteColumn(column.id)}>
+                  <button type="button" title="열 삭제" onClick={() => void deleteColumn(column.id)}>
                     <Trash2 size={15} />
                   </button>
                 </div>
                 <div
                   className="columnResizeHandle"
                   role="separator"
-                  aria-label="???덈퉬 議곗젅"
+                  aria-label="열 너비 조절"
                   onPointerDown={(event) => {
                     resizeRef.current = {
                       columnId: column.id,
@@ -544,7 +575,7 @@ export function App() {
             ))}
             <div className="sheetCell sheetHead addColumnCell">
               <button className="addSheetButton" type="button" onClick={() => void addColumn()}>
-                <Plus size={16} />??異붽?
+                <Plus size={16} />열 추가
               </button>
             </div>
 
@@ -554,10 +585,10 @@ export function App() {
                   <input
                     value={row.label}
                     aria-label="항목명"
-                    placeholder="??ぉ"
+                    placeholder="항목"
                     onChange={(event) => void updateRow(row.id, event.target.value)}
                   />
-                  <button type="button" title="??ぉ ??젣" onClick={() => void deleteRow(row.id)}>
+                  <button type="button" title="항목 삭제" onClick={() => void deleteRow(row.id)}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -568,7 +599,7 @@ export function App() {
                         className="cellTextInput"
                         value={column.values[row.id] ?? ""}
                         aria-label={`${column.name} ${row.label}`}
-                        placeholder="媛??낅젰"
+                        placeholder="값 입력"
                         onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
                       />
                       <CellImageControl
@@ -585,7 +616,7 @@ export function App() {
 
             <div className="sheetCell addRowLabel stickyCol">
               <button className="addSheetButton" type="button" onClick={() => void addRow()}>
-                <Plus size={16} />??異붽?
+                <Plus size={16} />항목 추가
               </button>
             </div>
             {columns.map((column) => (
@@ -598,7 +629,6 @@ export function App() {
                 <FileText size={14} />
                 PDF 매핑
               </span>
-              <span className="sectionBandHint">열별 PDF 다운로드</span>
             </div>
             {columns.map((column) => (
               <div className="sheetCell sectionDownloadCell" key={`${column.id}-pdf-bulk-download`}>
@@ -608,14 +638,7 @@ export function App() {
                   disabled={busyId === column.id}
                   onClick={() => void downloadPdfColumn(column)}
                 >
-                  {busyId === column.id ? (
-                    <>
-                      <Loader2 className="spinIcon" size={13} />
-                      다운로드 중...
-                    </>
-                  ) : (
-                    `${column.name} 일괄 다운로드`
-                  )}
+                  {column.name} 일괄 다운로드
                 </button>
               </div>
             ))}
@@ -626,7 +649,7 @@ export function App() {
                 <div className="sheetCell rowLabel stickyCol">
                   <input
                     value={pdfRow.label}
-                    aria-label="PDF ???대쫫"
+                    aria-label="PDF 행 이름"
                     placeholder="PDF"
                     onChange={(event) => void updatePdfRow(pdfRow.id, event.target.value)}
                   />
@@ -656,7 +679,7 @@ export function App() {
                               <>
                                 <button
                                   type="button"
-                                  title="寃곌낵 PDF"
+                                  title="결과 PDF"
                                   disabled={busyId === pdf.id}
                                   onClick={(event) => {
                                     event.stopPropagation();
@@ -667,7 +690,7 @@ export function App() {
                                 </button>
                                 <button
                                   type="button"
-                                  title="?명똿 ?댁젣"
+                                  title="세팅 해제"
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     void resetSetup(pdf);
@@ -679,7 +702,7 @@ export function App() {
                             ) : null}
                             <button
                               type="button"
-                              title="PDF ??젣"
+                              title="PDF 삭제"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 void deletePdf(pdf);
@@ -692,7 +715,7 @@ export function App() {
                       ) : (
                         <label className="pdfUploadSlot">
                           <Upload size={15} />
-                          PDF ?ｊ린
+                          PDF 넣기
                           <input
                             type="file"
                             accept="application/pdf"
@@ -709,7 +732,7 @@ export function App() {
 
             <div className="sheetCell addRowLabel stickyCol">
               <button className="addSheetButton" type="button" onClick={() => void addPdfRow()}>
-                <Plus size={16} />PDF ??異붽?
+                <Plus size={16} />PDF 행 추가
               </button>
             </div>
             {columns.map((column) => (
@@ -729,6 +752,15 @@ export function App() {
           onClose={() => setActiveSetup(undefined)}
           onSaved={(areas) => void completeSetup(activeSetup.pdf.id, areas)}
         />
+      ) : null}
+      {busyFeedback ? (
+        <div className="downloadOverlay" role="status" aria-live="polite">
+          <div className="downloadDialog">
+            <Loader2 className="spinIcon" size={28} />
+            <strong>{busyFeedback.title}</strong>
+            <span>{busyFeedback.description}</span>
+          </div>
+        </div>
       ) : null}
     </main>
   );
