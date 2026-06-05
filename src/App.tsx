@@ -1,4 +1,5 @@
 ﻿import { Fragment, useEffect, useRef, useState } from "react";
+import type { ClipboardEvent } from "react";
 import type { User } from "firebase/auth";
 import {
   Copy,
@@ -35,6 +36,19 @@ type BusyFeedback = {
 };
 
 const initialRows = ["이름", "비밀번호"];
+
+function parsePastedCells(text: string) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\n$/, "")
+    .split("\n")
+    .map((line) => line.split("\t"));
+}
+
+function isMultiCellPaste(cells: string[][]) {
+  return cells.length > 1 || cells.some((row) => row.length > 1);
+}
 
 export function App() {
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
@@ -292,6 +306,78 @@ export function App() {
     if (!changed) return;
     setColumns(nextColumns);
     await repository.saveColumn(changed);
+  }
+
+  async function pasteSheetCells(startRowId: string, startColumnId: string | undefined, cells: string[][]) {
+    if (!isMultiCellPaste(cells)) return;
+
+    const startRowIndex = Math.max(0, rows.findIndex((row) => row.id === startRowId));
+    const startColumnIndex = startColumnId ? Math.max(0, columns.findIndex((column) => column.id === startColumnId)) : -1;
+    const labelPaste = startColumnIndex === -1;
+    const valueWidth = Math.max(...cells.map((row) => Math.max(0, row.length - (labelPaste ? 1 : 0))));
+    const targetRowCount = startRowIndex + cells.length;
+    const targetColumnCount = labelPaste ? valueWidth : startColumnIndex + valueWidth;
+    const now = Date.now();
+
+    const nextRows = [...rows];
+    while (nextRows.length < targetRowCount) {
+      nextRows.push({
+        id: createId("row"),
+        label: "",
+        createdAt: now + nextRows.length,
+      });
+    }
+
+    const nextColumns = [...columns];
+    while (nextColumns.length < targetColumnCount) {
+      const index = nextColumns.length;
+      nextColumns.push({
+        id: createId("col"),
+        name: `값 ${String.fromCharCode(65 + index)}`,
+        values: {},
+        createdAt: now + 100 + index,
+        updatedAt: now + 100 + index,
+      });
+    }
+
+    const changedRows = new Set<string>();
+    const changedColumnIds = new Set<string>();
+    const existingRowIds = new Set(rows.map((row) => row.id));
+    const existingColumnIds = new Set(columns.map((column) => column.id));
+
+    cells.forEach((pastedRow, rowOffset) => {
+      const targetRow = nextRows[startRowIndex + rowOffset];
+      if (!targetRow) return;
+
+      if (labelPaste && pastedRow[0] !== undefined) {
+        targetRow.label = pastedRow[0];
+        changedRows.add(targetRow.id);
+      }
+
+      pastedRow.slice(labelPaste ? 1 : 0).forEach((value, columnOffset) => {
+        const targetColumn = nextColumns[(labelPaste ? 0 : startColumnIndex) + columnOffset];
+        if (!targetColumn) return;
+        targetColumn.values = { ...targetColumn.values, [targetRow.id]: value };
+        targetColumn.updatedAt = now;
+        changedColumnIds.add(targetColumn.id);
+      });
+    });
+
+    setRows(nextRows);
+    setColumns(nextColumns);
+    await Promise.all([
+      ...nextRows.filter((row) => changedRows.has(row.id) || !existingRowIds.has(row.id)).map((row) => repository.saveRow(row)),
+      ...nextColumns
+        .filter((column) => changedColumnIds.has(column.id) || !existingColumnIds.has(column.id))
+        .map((column) => repository.saveColumn(column)),
+    ]);
+  }
+
+  function handleSheetPaste(event: ClipboardEvent<HTMLInputElement>, rowId: string, columnId?: string) {
+    const cells = parsePastedCells(event.clipboardData.getData("text/plain"));
+    if (!isMultiCellPaste(cells)) return;
+    event.preventDefault();
+    void pasteSheetCells(rowId, columnId, cells);
   }
 
   async function uploadCellImage(column: ValueColumn, rowId: string, file: File, size: ImageSize) {
@@ -586,6 +672,7 @@ export function App() {
                     value={row.label}
                     aria-label="항목명"
                     placeholder="항목"
+                    onPaste={(event) => handleSheetPaste(event, row.id)}
                     onChange={(event) => void updateRow(row.id, event.target.value)}
                   />
                   <button type="button" title="항목 삭제" onClick={() => void deleteRow(row.id)}>
@@ -600,6 +687,7 @@ export function App() {
                         value={column.values[row.id] ?? ""}
                         aria-label={`${column.name} ${row.label}`}
                         placeholder="값 입력"
+                        onPaste={(event) => handleSheetPaste(event, row.id, column.id)}
                         onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
                       />
                       <CellImageControl
