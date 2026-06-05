@@ -4,7 +4,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ChevronLeft, ChevronRight, Eye, Plus, Save, Trash2, X } from "lucide-react";
 import { createId } from "../lib/ids";
-import { localRepository } from "../services/storage";
+import { repository } from "../services/storage";
 import type { ColumnPdf, FieldRow, FontAsset, PdfArea, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -16,6 +16,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 const DISPLAY_SCALE = 1.35;
 /** 새 영역을 추가할 때의 기본 글자 크기(pt). */
 const DEFAULT_FONT_SIZE = 11;
+const DEFAULT_IMAGE_WIDTH = 96;
 /** 영역 너비 측정 시 사용하는 글꼴. 실제 PDF 출력 글꼴과 맞춰야 측정이 정확하다. */
 const AREA_FONT_FAMILY = "LocalBatang, Batang, serif";
 
@@ -50,16 +51,18 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   const [loading, setLoading] = useState(true);
   const [previewMode, setPreviewMode] = useState(false);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let alive = true;
 
     async function loadPdf() {
       setLoading(true);
-      const [loadedAreas, bytes] = await Promise.all([
-        localRepository.getAreas(pdf.id),
-        pdf.file.arrayBuffer(),
+      const [loadedAreas, file] = await Promise.all([
+        repository.getAreas(pdf.id),
+        repository.getColumnPdfFile(pdf.id),
       ]);
+      const bytes = await file.arrayBuffer();
       const loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
 
       if (!alive) return;
@@ -136,6 +139,30 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
     };
   }, [size]);
 
+  useEffect(() => {
+    let alive = true;
+    const urls: string[] = [];
+
+    async function loadImages() {
+      const entries = await Promise.all(
+        Object.keys(column.images ?? {}).map(async (rowId) => {
+          const file = await repository.getCellImageFile(column.id, rowId);
+          const url = URL.createObjectURL(file);
+          urls.push(url);
+          return [rowId, url] as const;
+        }),
+      );
+
+      if (alive) setImageUrls(Object.fromEntries(entries));
+    }
+
+    void loadImages();
+    return () => {
+      alive = false;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [column.id, column.images]);
+
   const normalizedAreas = useMemo(
     () => areas.map((area) => resizeAreaToText(area)),
     [areas, column.values, rows, size],
@@ -145,13 +172,19 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   const selectedRow = rows.find((row) => row.id === selectedRowId);
   const selectedValue = getAreaValue(selectedRowId);
 
+  function isImageRow(rowId: string) {
+    return Boolean(column.images?.[rowId]);
+  }
+
   /** 항목에 입력된 값을 우선 쓰고, 없으면 항목 라벨로 폴백한다. (측정·배치 미리보기용) */
   function getAreaValue(rowId: string) {
+    if (isImageRow(rowId)) return rows.find((row) => row.id === rowId)?.label || "이미지";
     return column.values[rowId] || rows.find((row) => row.id === rowId)?.label || "";
   }
 
   /** 화면 표시용 원본 값. 값이 없으면 빈 문자열을 그대로 둔다. */
   function getDisplayValue(rowId: string) {
+    if (isImageRow(rowId)) return column.images?.[rowId]?.name ?? "이미지";
     return column.values[rowId] ?? "";
   }
 
@@ -218,9 +251,13 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   }
 
   function resizeAreaToText(area: PdfArea) {
-    const value = getAreaValue(area.rowId);
-    const width = measureAreaWidth(value, area.fontSize, size.width);
-    const height = measureAreaHeight(area.fontSize, size.height);
+    const image = column.images?.[area.rowId];
+    const width = image
+      ? measureImageAreaWidth(image.width, area.fontSize, size.width)
+      : measureAreaWidth(getAreaValue(area.rowId), area.fontSize, size.width);
+    const height = image
+      ? measureImageAreaHeight(image.width, image.height, width, size.width, size.height)
+      : measureAreaHeight(area.fontSize, size.height);
 
     return {
       ...area,
@@ -237,7 +274,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   }
 
   async function save() {
-    await localRepository.replaceAreas(pdf.id, normalizedAreas);
+    await repository.replaceAreas(pdf.id, normalizedAreas);
     onSaved(normalizedAreas);
     onClose();
   }
@@ -273,7 +310,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
                   onClick={() => setSelectedRowId(row.id)}
                 >
                   <span>{row.label || "항목 없음"}</span>
-                  <strong>{column.values[row.id] || "값 없음"}</strong>
+                  <strong>{column.images?.[row.id] ? "이미지" : column.values[row.id] || "값 없음"}</strong>
                 </button>
               ))}
             </div>
@@ -306,7 +343,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
                     </select>
                   </label>
                   <label>
-                    글자 크기
+                    크기
                     <input
                       type="number"
                       min={6}
@@ -362,7 +399,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
               <div className="pdfCanvasBox" style={{ width: size.width, height: size.height }}>
                 <canvas ref={canvasRef} />
                 {previewMode ? (
-                  <PreviewAreaLayer areas={pageAreas} size={size} getValue={getDisplayValue} />
+                  <PreviewAreaLayer areas={pageAreas} size={size} imageUrls={imageUrls} getValue={getDisplayValue} />
                 ) : (
                   <EditAreaLayer
                     overlayRef={overlayRef}
@@ -371,6 +408,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
                     selectedAreaId={selectedAreaId}
                     hoverPoint={hoverPoint}
                     placementValue={selectedValue}
+                    imageUrls={imageUrls}
                     onHoverMove={handleHoverMove}
                     onHoverLeave={() => setHoverPoint(null)}
                     onAddAt={addAreaAt}
@@ -425,16 +463,21 @@ function areaStyle(area: PdfArea, size: Size) {
 type PreviewAreaLayerProps = {
   areas: PdfArea[];
   size: Size;
+  imageUrls: Record<string, string>;
   getValue: (rowId: string) => string;
 };
 
 /** 미리보기 모드: 상호작용 없이 각 영역의 값만 그대로 표시한다. */
-function PreviewAreaLayer({ areas, size, getValue }: PreviewAreaLayerProps) {
+function PreviewAreaLayer({ areas, size, imageUrls, getValue }: PreviewAreaLayerProps) {
   return (
     <div className="areaOverlay previewing">
       {areas.map((area) => (
         <div className="mappedArea preview" key={area.id} style={areaStyle(area, size)}>
-          <span>{getValue(area.rowId)}</span>
+          {imageUrls[area.rowId] ? (
+            <img src={imageUrls[area.rowId]} alt={getValue(area.rowId)} />
+          ) : (
+            <span>{getValue(area.rowId)}</span>
+          )}
         </div>
       ))}
     </div>
@@ -448,6 +491,7 @@ type EditAreaLayerProps = {
   selectedAreaId: string;
   hoverPoint: { x: number; y: number } | null;
   placementValue: string;
+  imageUrls: Record<string, string>;
   onHoverMove: (event: ReactMouseEvent<HTMLDivElement>) => void;
   onHoverLeave: () => void;
   onAddAt: (clientX: number, clientY: number) => void;
@@ -465,6 +509,7 @@ function EditAreaLayer({
   selectedAreaId,
   hoverPoint,
   placementValue,
+  imageUrls,
   onHoverMove,
   onHoverLeave,
   onAddAt,
@@ -502,7 +547,11 @@ function EditAreaLayer({
           style={areaStyle(area, size)}
           onPointerDown={(event) => onStartDrag(event, area)}
         >
-          <span>{getValue(area.rowId) || getLabel(area.rowId)}</span>
+          {imageUrls[area.rowId] ? (
+            <img src={imageUrls[area.rowId]} alt={getValue(area.rowId) || getLabel(area.rowId)} />
+          ) : (
+            <span>{getValue(area.rowId) || getLabel(area.rowId)}</span>
+          )}
           <button
             type="button"
             className="areaDeleteButton"
@@ -537,4 +586,20 @@ function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
 
 function measureAreaHeight(fontSize: number, pageHeight: number) {
   return clamp((fontSize * 1.55) / pageHeight, 0.001, 0.12);
+}
+
+function measureImageAreaWidth(imageWidth: number, fontSize: number, pageWidth: number) {
+  const scaledWidth = DEFAULT_IMAGE_WIDTH * (fontSize / DEFAULT_FONT_SIZE);
+  return clamp(scaledWidth / pageWidth, 0.02, 0.9);
+}
+
+function measureImageAreaHeight(
+  imageWidth: number,
+  imageHeight: number,
+  normalizedWidth: number,
+  pageWidth: number,
+  pageHeight: number,
+) {
+  const ratio = imageHeight / Math.max(imageWidth, 1);
+  return clamp((normalizedWidth * pageWidth * ratio) / pageHeight, 0.001, 0.9);
 }

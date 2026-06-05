@@ -8,7 +8,9 @@ export async function exportPdf(
   column: ValueColumn,
   areas: PdfArea[],
   fontAsset?: FontAsset,
+  imageFiles: Record<string, Blob> = {},
 ) {
+  if (!pdf.file) throw new Error("PDF 원본을 불러오지 못했습니다.");
   const bytes = await pdf.file.arrayBuffer();
   const pdfDocument = await PDFDocument.load(bytes);
   pdfDocument.registerFontkit(fontkit);
@@ -26,13 +28,31 @@ export async function exportPdf(
     const row = rowsById.get(area.rowId);
     if (!row) continue;
 
-    const text = column.values[row.id] ?? "";
-    if (!text) continue;
-
     const { width: pageWidth, height: pageHeight } = page.getSize();
     const x = area.x * pageWidth;
     const boxTop = area.y * pageHeight;
     const boxHeight = area.height * pageHeight;
+    const imageFile = imageFiles[row.id];
+
+    if (imageFile) {
+      const imageBytes = await imageFile.arrayBuffer();
+      const image =
+        imageFile.type === "image/png"
+          ? await pdfDocument.embedPng(imageBytes)
+          : await pdfDocument.embedJpg(imageBytes);
+
+      page.drawImage(image, {
+        x,
+        y: pageHeight - boxTop - boxHeight,
+        width: area.width * pageWidth,
+        height: boxHeight,
+      });
+      continue;
+    }
+
+    const text = column.values[row.id] ?? "";
+    if (!text) continue;
+
     const y = pageHeight - boxTop - area.fontSize;
 
     page.drawText(text, {

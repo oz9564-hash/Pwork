@@ -8,7 +8,16 @@ export type ValueColumn = {
   id: string;
   name: string;
   values: Record<string, string>;
+  images?: Record<string, CellImageAsset>;
   createdAt: number;
+  updatedAt: number;
+};
+
+export type CellImageAsset = {
+  name: string;
+  contentType: "image/png" | "image/jpeg";
+  width: number;
+  height: number;
   updatedAt: number;
 };
 
@@ -23,7 +32,8 @@ export type ColumnPdf = {
   columnId: string;
   pdfRowId: string;
   name: string;
-  file: Blob;
+  /** 업로드/복사 시에만 채워지는 PDF 원본. 평소 메모리에는 메타데이터만 두고 필요할 때 Storage에서 내려받는다. */
+  file?: Blob;
   status: "draft" | "ready";
   createdAt: number;
   updatedAt: number;

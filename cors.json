@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "https://pwork-9bf30.web.app",
+      "https://pwork-9bf30.firebaseapp.com"
+    ],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Content-Disposition"]
+  }
+]

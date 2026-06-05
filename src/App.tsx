@@ -1,8 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { User } from "firebase/auth";
 import {
   Copy,
   FileDown,
   FileText,
+  Image as ImageIcon,
+  Info,
+  LogOut,
   Plus,
   RotateCcw,
   Trash2,
@@ -11,7 +15,8 @@ import {
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { createId } from "./lib/ids";
 import { exportPdf } from "./services/pdfExport";
-import { localRepository } from "./services/storage";
+import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
+import { repository } from "./services/storage";
 import type { ColumnPdf, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "./types";
 
 type ActiveSetup = {
@@ -31,11 +36,43 @@ export function App() {
   const [font, setFont] = useState<FontAsset>();
   const [activeSetup, setActiveSetup] = useState<ActiveSetup>();
   const [busyId, setBusyId] = useState<string>();
-  const [message, setMessage] = useState("열마다 값과 PDF가 독립 저장됩니다.");
+  const [message, setMessage] = useState("열마다 값과 PDF가 클라우드에 저장됩니다.");
+  // undefined = 인증 확인 중, null = 로그아웃 상태, User = 로그인됨
+  const [user, setUser] = useState<User | null | undefined>(undefined);
+  const [authBusy, setAuthBusy] = useState(false);
 
   useEffect(() => {
-    void load();
+    return watchAuth(setUser);
   }, []);
+
+  useEffect(() => {
+    if (user || SKIP_LOGIN) {
+      void load();
+      return;
+    }
+    // 로그아웃 시 메모리에 남은 데이터 비우기
+    setRows([]);
+    setColumns([]);
+    setPdfRows([]);
+    setPdfs([]);
+    setFont(undefined);
+  }, [user]);
+
+  async function handleSignIn() {
+    setAuthBusy(true);
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "로그인에 실패했습니다.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleSignOut() {
+    await signOutUser();
+    setMessage("로그아웃했습니다.");
+  }
 
   useEffect(() => {
     function onPointerMove(event: PointerEvent) {
@@ -60,11 +97,11 @@ export function App() {
 
   async function load() {
     const [storedRows, storedColumns, storedPdfRows, storedPdfs, storedFont] = await Promise.all([
-      localRepository.getRows(),
-      localRepository.getColumns(),
-      localRepository.getPdfRows(),
-      localRepository.getAllColumnPdfs(),
-      localRepository.getFont(),
+      repository.getRows(),
+      repository.getColumns(),
+      repository.getPdfRows(),
+      repository.getAllColumnPdfs(),
+      repository.getFont(),
     ]);
 
     setRows(storedRows.sort((a, b) => a.createdAt - b.createdAt));
@@ -92,8 +129,8 @@ export function App() {
       updatedAt: now + 10,
     };
 
-    for (const row of nextRows) await localRepository.saveRow(row);
-    await localRepository.saveColumn(column);
+    for (const row of nextRows) await repository.saveRow(row);
+    await repository.saveColumn(column);
     setRows(nextRows);
     setColumns([column]);
     setMessage("기본 표를 만들었습니다.");
@@ -105,7 +142,7 @@ export function App() {
       label: "",
       createdAt: Date.now(),
     };
-    await localRepository.saveRow(row);
+    await repository.saveRow(row);
     setRows((current) => [...current, row]);
   }
 
@@ -115,7 +152,7 @@ export function App() {
       label: `PDF ${pdfRows.length + 1}`,
       createdAt: Date.now(),
     };
-    await localRepository.savePdfRow(row);
+    await repository.savePdfRow(row);
     setPdfRows((current) => [...current, row]);
   }
 
@@ -124,11 +161,11 @@ export function App() {
     const changed = nextRows.find((row) => row.id === pdfRowId);
     if (!changed) return;
     setPdfRows(nextRows);
-    await localRepository.savePdfRow(changed);
+    await repository.savePdfRow(changed);
   }
 
   async function deletePdfRow(pdfRowId: string) {
-    await localRepository.deletePdfRow(pdfRowId);
+    await repository.deletePdfRow(pdfRowId);
     setPdfRows((current) => current.filter((row) => row.id !== pdfRowId));
     setPdfs((current) => current.filter((pdf) => pdf.pdfRowId !== pdfRowId));
   }
@@ -138,16 +175,17 @@ export function App() {
     const changed = nextRows.find((row) => row.id === rowId);
     if (!changed) return;
     setRows(nextRows);
-    await localRepository.saveRow(changed);
+    await repository.saveRow(changed);
   }
 
   async function deleteRow(rowId: string) {
-    await localRepository.deleteRow(rowId);
+    await repository.deleteRow(rowId);
     setRows((current) => current.filter((row) => row.id !== rowId));
     setColumns((current) =>
       current.map((column) => {
         const { [rowId]: _removed, ...values } = column.values;
-        return { ...column, values };
+        const { [rowId]: _removedImage, ...images } = column.images ?? {};
+        return { ...column, values, images };
       }),
     );
     setPdfs((current) => [...current]);
@@ -162,43 +200,51 @@ export function App() {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    await localRepository.saveColumn(column);
+    await repository.saveColumn(column);
     setColumns((current) => [...current, column]);
   }
 
   async function duplicateColumn(source: ValueColumn) {
     const now = Date.now();
-    const copiedColumn: ValueColumn = {
+    let copiedColumn: ValueColumn = {
       id: createId("col"),
       name: `${source.name} 복사`,
       values: { ...source.values },
+      images: {},
       createdAt: now,
       updatedAt: now,
     };
 
-    await localRepository.saveColumn(copiedColumn);
+    await repository.saveColumn(copiedColumn);
 
-    const sourcePdfs = await localRepository.getColumnPdfs(source.id);
+    for (const [rowId, image] of Object.entries(source.images ?? {})) {
+      const file = await repository.getCellImageFile(source.id, rowId);
+      copiedColumn = await repository.saveCellImage(copiedColumn, rowId, file, image);
+    }
+
+    const sourcePdfs = await repository.getColumnPdfs(source.id);
     const copiedPdfs: ColumnPdf[] = [];
 
     for (const sourcePdf of sourcePdfs) {
+      const file = await repository.getColumnPdfFile(sourcePdf.id);
       const copiedPdf: ColumnPdf = {
         ...sourcePdf,
         id: createId("pdf"),
         columnId: copiedColumn.id,
+        file,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      await localRepository.saveColumnPdf(copiedPdf);
-      copiedPdfs.push(copiedPdf);
+      await repository.saveColumnPdf(copiedPdf);
+      copiedPdfs.push({ ...copiedPdf, file: undefined });
 
-      const sourceAreas = await localRepository.getAreas(sourcePdf.id);
+      const sourceAreas = await repository.getAreas(sourcePdf.id);
       const copiedAreas = sourceAreas.map((area): PdfArea => ({
         ...area,
         id: createId("area"),
         columnPdfId: copiedPdf.id,
       }));
-      await localRepository.replaceAreas(copiedPdf.id, copiedAreas);
+      await repository.replaceAreas(copiedPdf.id, copiedAreas);
     }
 
     setColumns((current) => [...current, copiedColumn]);
@@ -213,7 +259,7 @@ export function App() {
     const changed = nextColumns.find((column) => column.id === columnId);
     if (!changed) return;
     setColumns(nextColumns);
-    await localRepository.saveColumn(changed);
+    await repository.saveColumn(changed);
   }
 
   async function updateCell(columnId: string, rowId: string, value: string) {
@@ -225,11 +271,36 @@ export function App() {
     const changed = nextColumns.find((column) => column.id === columnId);
     if (!changed) return;
     setColumns(nextColumns);
-    await localRepository.saveColumn(changed);
+    await repository.saveColumn(changed);
+  }
+
+  async function uploadCellImage(column: ValueColumn, rowId: string, file: File | undefined) {
+    if (!file) return;
+    if (!(file.type === "image/png" || file.type === "image/jpeg")) {
+      setMessage("PNG 또는 JPG 이미지만 넣을 수 있습니다.");
+      return;
+    }
+
+    const size = await readImageSize(file);
+    const changed = await repository.saveCellImage(column, rowId, file, {
+      name: file.name,
+      contentType: file.type,
+      width: size.width,
+      height: size.height,
+      updatedAt: Date.now(),
+    });
+    setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
+    setMessage(`${column.name} 셀에 이미지를 넣었습니다.`);
+  }
+
+  async function clearCellImage(column: ValueColumn, rowId: string) {
+    const changed = await repository.clearCellImage(column, rowId);
+    setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
+    setMessage(`${column.name} 셀의 이미지를 삭제했습니다.`);
   }
 
   async function deleteColumn(columnId: string) {
-    await localRepository.deleteColumn(columnId);
+    await repository.deleteColumn(columnId);
     setColumns((current) => current.filter((column) => column.id !== columnId));
     setPdfs((current) => current.filter((pdf) => pdf.columnId !== columnId));
     setMessage("열을 삭제했습니다.");
@@ -240,7 +311,7 @@ export function App() {
     if (!(file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))) return;
 
     const existing = findPdf(columnId, pdfRowId);
-    if (existing) await localRepository.deleteColumnPdf(existing.id);
+    if (existing) await repository.deleteColumnPdf(existing.id);
 
     const pdf: ColumnPdf = {
       id: createId("pdf"),
@@ -253,8 +324,8 @@ export function App() {
       updatedAt: Date.now(),
     };
 
-    await localRepository.saveColumnPdf(pdf);
-    setPdfs((current) => [...current.filter((item) => item.id !== existing?.id), pdf]);
+    await repository.saveColumnPdf(pdf);
+    setPdfs((current) => [...current.filter((item) => item.id !== existing?.id), { ...pdf, file: undefined }]);
     setMessage("PDF 셀에 파일을 넣었습니다.");
   }
 
@@ -266,13 +337,13 @@ export function App() {
       file,
       updatedAt: Date.now(),
     };
-    await localRepository.saveFont(nextFont);
+    await repository.saveFont(nextFont);
     setFont(nextFont);
     setMessage("한글 출력 폰트를 저장했습니다.");
   }
 
   async function clearFont() {
-    await localRepository.clearFont();
+    await repository.clearFont();
     setFont(undefined);
     setMessage("폰트 설정을 해제했습니다.");
   }
@@ -281,28 +352,28 @@ export function App() {
     const pdf = pdfs.find((item) => item.id === columnPdfId);
     if (!pdf) return;
 
-    const savedAreas = areas ?? (await localRepository.getAreas(columnPdfId));
+    const savedAreas = areas ?? (await repository.getAreas(columnPdfId));
     if (savedAreas.length === 0) {
       setMessage("영역이 없어서 세팅 완료로 바꿀 수 없습니다.");
       return;
     }
 
     const updated: ColumnPdf = { ...pdf, status: "ready", updatedAt: Date.now() };
-    await localRepository.saveColumnPdf(updated);
+    await repository.saveColumnPdf(updated);
     setPdfs((current) => current.map((item) => (item.id === columnPdfId ? updated : item)));
     setMessage(`${pdf.name} 세팅을 완료했습니다.`);
   }
 
   async function resetSetup(pdf: ColumnPdf) {
     const updated: ColumnPdf = { ...pdf, status: "draft", updatedAt: Date.now() };
-    await localRepository.clearAreas(pdf.id);
-    await localRepository.saveColumnPdf(updated);
+    await repository.clearAreas(pdf.id);
+    await repository.saveColumnPdf(updated);
     setPdfs((current) => current.map((item) => (item.id === pdf.id ? updated : item)));
     setMessage(`${pdf.name} 세팅을 해제했습니다.`);
   }
 
   async function deletePdf(pdf: ColumnPdf) {
-    await localRepository.deleteColumnPdf(pdf.id);
+    await repository.deleteColumnPdf(pdf.id);
     setPdfs((current) => current.filter((item) => item.id !== pdf.id));
     setMessage(`${pdf.name} PDF를 삭제했습니다.`);
   }
@@ -310,8 +381,16 @@ export function App() {
   async function downloadFilledPdf(column: ValueColumn, pdf: ColumnPdf) {
     setBusyId(pdf.id);
     try {
-      const areas = await localRepository.getAreas(pdf.id);
-      await exportPdf(pdf, rows, column, areas, font);
+      const [areas, file] = await Promise.all([
+        repository.getAreas(pdf.id),
+        repository.getColumnPdfFile(pdf.id),
+      ]);
+      const imageEntries = await Promise.all(
+        areas
+          .filter((area) => column.images?.[area.rowId])
+          .map(async (area) => [area.rowId, await repository.getCellImageFile(column.id, area.rowId)] as const),
+      );
+      await exportPdf({ ...pdf, file }, rows, column, areas, font, Object.fromEntries(imageEntries));
       setMessage(`${column.name} / ${pdf.name} 결과 PDF를 생성했습니다.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "PDF 생성에 실패했습니다.");
@@ -337,41 +416,70 @@ export function App() {
     return columnWidths[columnId] ?? 280;
   }
 
+  const totalMappedPdfs = pdfs.filter((pdf) => pdf.status === "ready").length;
+
+  if (!SKIP_LOGIN && user === undefined) {
+    return (
+      <main className="authShell">
+        <div className="authCard">
+          <FileText size={28} />
+          <p>불러오는 중…</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!SKIP_LOGIN && user === null) {
+    return (
+      <main className="authShell">
+        <div className="authCard">
+          <span className="brandMark" aria-hidden="true">
+            <FileText size={24} />
+          </span>
+          <h1>PDF 텍스트 매퍼</h1>
+          <p>로그인하면 어느 기기에서든 같은 작업 데이터를 불러올 수 있습니다.</p>
+          <button className="button primary" type="button" disabled={authBusy} onClick={() => void handleSignIn()}>
+            {authBusy ? "로그인 중…" : "Google로 로그인"}
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="appShell">
       <header className="topBar">
-        <div>
-          <h1>PDF 텍스트 매퍼</h1>
-          <p>각 열을 독립 작업 세트로 관리합니다.</p>
+        <div className="brand">
+          <span className="brandMark" aria-hidden="true">
+            <FileText size={20} />
+          </span>
+          <div className="brandText">
+            <h1>PDF 텍스트 매퍼</h1>
+            <p>각 열을 독립 작업 세트로 관리합니다.</p>
+          </div>
         </div>
-        <div className="topActions">
-          <button className="button secondary" type="button" onClick={() => void addRow()}>
-            <Plus size={16} />
-            항목
-          </button>
-          <button className="button secondary" type="button" onClick={() => void addColumn()}>
-            <Plus size={16} />값 열
-          </button>
-          <label className="button secondary">
-            <Upload size={16} />
-            폰트
-            <input
-              type="file"
-              accept=".ttf,.otf,font/ttf,font/otf"
-              onChange={(event) => void uploadFont(event.target.files?.[0])}
-            />
-          </label>
-          {font ? (
-            <button className="button ghost" type="button" onClick={() => void clearFont()}>
-              <RotateCcw size={16} />
-              폰트 해제
+        <div className="workspaceSummary" aria-label="작업 현황">
+          <span>{rows.length}개 항목</span>
+          <span>{columns.length}개 열</span>
+          <span>{totalMappedPdfs}/{pdfs.length} PDF</span>
+          {user ? (
+            <button
+              className="iconButton"
+              type="button"
+              title={`${user.email ?? "사용자"} 로그아웃`}
+              onClick={() => void handleSignOut()}
+            >
+              <LogOut size={16} />
             </button>
           ) : null}
         </div>
       </header>
 
       <section className="notice">
-        <span>{message}</span>
+        <span className="noticeMessage">
+          <Info size={15} />
+          {message}
+        </span>
         {hasKorean && !font ? <strong>한글 출력 기본 폰트: 휴먼명조 우선, 없으면 바탕</strong> : null}
       </section>
 
@@ -442,12 +550,40 @@ export function App() {
                 </div>
                 {columns.map((column) => (
                   <div className="sheetCell valueCell" key={`${row.id}-${column.id}`}>
-                    <input
-                      value={column.values[row.id] ?? ""}
-                      aria-label={`${column.name} ${row.label}`}
-                      placeholder="값 입력"
-                      onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
-                    />
+                    <div className="cellValueWrap">
+                      <input
+                        value={column.values[row.id] ?? ""}
+                        aria-label={`${column.name} ${row.label}`}
+                        placeholder="값 입력"
+                        onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
+                      />
+                      {column.images?.[row.id] ? (
+                        <button
+                          className="cellImageBadge"
+                          type="button"
+                          title={`${column.images[row.id].name} 삭제`}
+                          onClick={() => void clearCellImage(column, row.id)}
+                        >
+                          <ImageIcon size={14} />
+                          이미지
+                        </button>
+                      ) : (
+                        <label
+                          className="cellImageButton"
+                          htmlFor={`cell-image-${column.id}-${row.id}`}
+                          title="이미지 넣기"
+                        >
+                          <ImageIcon size={14} />
+                        </label>
+                      )}
+                      <input
+                        id={`cell-image-${column.id}-${row.id}`}
+                        className="cellImageInput"
+                        type="file"
+                        accept="image/png,image/jpeg"
+                        onChange={(event) => void uploadCellImage(column, row.id, event.target.files?.[0])}
+                      />
+                    </div>
                   </div>
                 ))}
                 <div className="sheetCell emptyAddColumnCell" />
@@ -464,13 +600,13 @@ export function App() {
             ))}
             <div className="sheetCell emptyAddColumnCell" />
 
-            <div className="sheetCell pdfLabel stickyCol">PDF</div>
-            {columns.map((column) => (
-              <div className="sheetCell pdfSectionHead" key={`${column.id}-pdf-head`}>
-                {column.name} PDF
-              </div>
-            ))}
-            <div className="sheetCell emptyAddColumnCell" />
+            <div className="sectionBand" style={{ gridColumn: "1 / -1" }}>
+              <span className="sectionBandLabel">
+                <FileText size={14} />
+                PDF 매핑
+              </span>
+              <span className="sectionBandHint">열 머리글 기준으로 정렬됩니다</span>
+            </div>
 
             {pdfRows.map((pdfRow) => (
               <Fragment key={pdfRow.id}>
@@ -583,4 +719,20 @@ export function App() {
       ) : null}
     </main>
   );
+}
+
+function readImageSize(file: File) {
+  return new Promise<{ width: number; height: number }>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("이미지 크기를 읽지 못했습니다."));
+    };
+    image.src = url;
+  });
 }
