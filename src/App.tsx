@@ -1,5 +1,5 @@
 ﻿import { Fragment, useEffect, useRef, useState } from "react";
-import type { ClipboardEvent } from "react";
+import type { CSSProperties, ClipboardEvent } from "react";
 import type { User } from "firebase/auth";
 import {
   Copy,
@@ -11,19 +11,16 @@ import {
   RotateCcw,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { CellImageControl } from "./components/CellImageControl";
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { createId } from "./lib/ids";
+import { optimizeImageFile } from "./lib/imageOptimize";
 import { exportPdf } from "./services/pdfExport";
 import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
 import { repository } from "./services/storage";
 import type { ColumnPdf, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "./types";
-
-type ImageSize = {
-  width: number;
-  height: number;
-};
 
 type ActiveSetup = {
   column: ValueColumn;
@@ -33,6 +30,11 @@ type ActiveSetup = {
 type BusyFeedback = {
   title: string;
   description: string;
+};
+
+type CellImagePreview = {
+  name: string;
+  url: string;
 };
 
 type SheetCellPoint = {
@@ -46,6 +48,9 @@ type SheetSelection = {
 };
 
 const initialRows = ["이름", "비밀번호"];
+const MIN_SHEET_ZOOM = 0.75;
+const MAX_SHEET_ZOOM = 1.8;
+const SHEET_ZOOM_STEP = 0.1;
 
 function parsePastedCells(text: string) {
   return text
@@ -63,6 +68,7 @@ function isMultiCellPaste(cells: string[][]) {
 export function App() {
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
   const selectingRef = useRef(false);
+  const sheetWrapRef = useRef<HTMLElement | null>(null);
   const [rows, setRows] = useState<FieldRow[]>([]);
   const [columns, setColumns] = useState<ValueColumn[]>([]);
   const [pdfRows, setPdfRows] = useState<PdfSlotRow[]>([]);
@@ -73,6 +79,8 @@ export function App() {
   const [busyId, setBusyId] = useState<string>();
   const [busyFeedback, setBusyFeedback] = useState<BusyFeedback>();
   const [sheetSelection, setSheetSelection] = useState<SheetSelection>();
+  const [sheetZoom, setSheetZoom] = useState(1);
+  const [imagePreview, setImagePreview] = useState<CellImagePreview>();
   // undefined = 인증 확인 중, null = 로그아웃 상태, User = 로그인됨
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
@@ -130,6 +138,25 @@ export function App() {
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
+  }, []);
+
+  useEffect(() => {
+    const sheetWrap = sheetWrapRef.current;
+    if (!sheetWrap) return;
+
+    function onWheel(event: WheelEvent) {
+      if (!event.ctrlKey) return;
+
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      setSheetZoom((current) => {
+        const next = current + direction * SHEET_ZOOM_STEP;
+        return Math.min(MAX_SHEET_ZOOM, Math.max(MIN_SHEET_ZOOM, Number(next.toFixed(2))));
+      });
+    }
+
+    sheetWrap.addEventListener("wheel", onWheel, { passive: false });
+    return () => sheetWrap.removeEventListener("wheel", onWheel);
   }, []);
 
   async function load() {
@@ -467,12 +494,13 @@ export function App() {
     return classes.join(" ");
   }
 
-  async function uploadCellImage(column: ValueColumn, rowId: string, file: File, size: ImageSize) {
-    const changed = await repository.saveCellImage(column, rowId, file, {
-      name: file.name,
-      contentType: file.type as "image/png" | "image/jpeg",
-      width: size.width,
-      height: size.height,
+  async function uploadCellImage(column: ValueColumn, rowId: string, file: File) {
+    const optimized = await optimizeImageFile(file);
+    const changed = await repository.saveCellImage(column, rowId, optimized.file, {
+      name: optimized.name,
+      contentType: optimized.contentType,
+      width: optimized.width,
+      height: optimized.height,
       updatedAt: Date.now(),
     });
     setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
@@ -481,6 +509,18 @@ export function App() {
   async function clearCellImage(column: ValueColumn, rowId: string) {
     const changed = await repository.clearCellImage(column, rowId);
     setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
+  }
+
+  async function openCellImagePreview(column: ValueColumn, rowId: string) {
+    const image = column.images?.[rowId];
+    if (!image) return;
+
+    const url = await repository.getCellImageUrl(column.id, rowId, image);
+    setImagePreview({ name: image.name || "이미지", url });
+  }
+
+  function closeCellImagePreview() {
+    setImagePreview(undefined);
   }
 
   async function deleteColumn(columnId: string) {
@@ -707,11 +747,17 @@ export function App() {
           </button>
         </section>
       ) : (
-        <section className="sheetWrap">
+        <section
+          ref={sheetWrapRef}
+          className="sheetWrap"
+          style={{ "--sheet-zoom": sheetZoom } as CSSProperties}
+        >
           <div
             className="sheet"
             style={{
-              gridTemplateColumns: `220px ${columns.map((column) => `${getColumnWidth(column.id)}px`).join(" ")} minmax(160px, 1fr)`,
+              gridTemplateColumns: `${Math.round(220 * sheetZoom)}px ${columns
+                .map((column) => `${Math.round(getColumnWidth(column.id) * sheetZoom)}px`)
+                .join(" ")} minmax(${Math.round(160 * sheetZoom)}px, 1fr)`,
             }}
           >
             <div className="sheetCell sheetHead stickyCol">항목</div>
@@ -778,34 +824,40 @@ export function App() {
                     <Trash2 size={14} />
                   </button>
                 </div>
-                {columns.map((column) => (
-                  <div
-                    className={`${getSheetCellClass(row.id, column.id)} valueCell`}
-                    key={`${row.id}-${column.id}`}
-                    onPointerDown={(event) => {
-                      if (event.button !== 0) return;
-                      selectSheetCell({ rowId: row.id, columnId: column.id });
-                    }}
-                    onPointerEnter={() => extendSheetSelection({ rowId: row.id, columnId: column.id })}
-                  >
-                    <div className="cellValueWrap">
-                      <input
-                        className="cellTextInput"
-                        value={column.values[row.id] ?? ""}
-                        aria-label={`${column.name} ${row.label}`}
-                        placeholder="값 입력"
-                        onFocus={() => focusSheetCell({ rowId: row.id, columnId: column.id })}
-                        onPaste={(event) => handleSheetPaste(event, row.id, column.id)}
-                        onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
-                      />
-                      <CellImageControl
-                        image={column.images?.[row.id]}
-                        onSelect={(file, size) => uploadCellImage(column, row.id, file, size)}
-                        onClear={() => clearCellImage(column, row.id)}
-                      />
+                {columns.map((column) => {
+                  const image = column.images?.[row.id];
+                  return (
+                    <div
+                      className={`${getSheetCellClass(row.id, column.id)} valueCell`}
+                      key={`${row.id}-${column.id}`}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return;
+                        selectSheetCell({ rowId: row.id, columnId: column.id });
+                      }}
+                      onPointerEnter={() => extendSheetSelection({ rowId: row.id, columnId: column.id })}
+                    >
+                      <div className={image ? "cellValueWrap hasImage" : "cellValueWrap"}>
+                        {image ? null : (
+                          <input
+                            className="cellTextInput"
+                            value={column.values[row.id] ?? ""}
+                            aria-label={`${column.name} ${row.label}`}
+                            placeholder="값 입력"
+                            onFocus={() => focusSheetCell({ rowId: row.id, columnId: column.id })}
+                            onPaste={(event) => handleSheetPaste(event, row.id, column.id)}
+                            onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
+                          />
+                        )}
+                        <CellImageControl
+                          image={image}
+                          onSelect={(file) => uploadCellImage(column, row.id, file)}
+                          onPreview={() => openCellImagePreview(column, row.id)}
+                          onClear={() => clearCellImage(column, row.id)}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 <div className="sheetCell emptyAddColumnCell" />
               </Fragment>
             ))}
@@ -948,6 +1000,21 @@ export function App() {
           onClose={() => setActiveSetup(undefined)}
           onSaved={(areas) => void completeSetup(activeSetup.pdf.id, areas)}
         />
+      ) : null}
+      {imagePreview ? (
+        <div className="modalBackdrop imagePreviewBackdrop" role="dialog" aria-modal="true" aria-label={imagePreview.name}>
+          <div className="imagePreviewModal">
+            <header className="imagePreviewHeader">
+              <strong>{imagePreview.name}</strong>
+              <button className="iconButton" type="button" title="닫기" onClick={closeCellImagePreview}>
+                <X size={18} />
+              </button>
+            </header>
+            <div className="imagePreviewBody">
+              <img src={imagePreview.url} alt={imagePreview.name} />
+            </div>
+          </div>
+        </div>
       ) : null}
       {busyFeedback ? (
         <div className="downloadOverlay" role="status" aria-live="polite">

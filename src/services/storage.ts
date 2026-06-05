@@ -9,7 +9,7 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore";
-import { deleteObject, getBlob, ref, uploadBytes } from "firebase/storage";
+import { deleteObject, getBlob, getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { db, requireUid, storage } from "./firebase";
 import type { CellImageAsset, ColumnPdf, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 
@@ -229,6 +229,10 @@ export const repository = {
 
   async getCellImageFile(columnId: string, rowId: string, image?: CellImageAsset) {
     return getBlob(cellImageAssetRef(requireUid(), columnId, rowId, image));
+  },
+
+  async getCellImageUrl(columnId: string, rowId: string, image?: CellImageAsset) {
+    return getDownloadURL(cellImageAssetRef(requireUid(), columnId, rowId, image));
   },
 
   async deleteColumnPdf(columnPdfId: string) {

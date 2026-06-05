@@ -1,20 +1,16 @@
 import { useRef } from "react";
 import type { ChangeEvent } from "react";
-import { Image as ImageIcon } from "lucide-react";
+import { Image as ImageIcon, Trash2 } from "lucide-react";
 import type { CellImageAsset } from "../types";
-
-type ImageSize = {
-  width: number;
-  height: number;
-};
 
 type CellImageControlProps = {
   image?: CellImageAsset;
-  onSelect: (file: File, size: ImageSize) => void | Promise<void>;
+  onSelect: (file: File) => void | Promise<void>;
+  onPreview: () => void | Promise<void>;
   onClear: () => void | Promise<void>;
 };
 
-export function CellImageControl({ image, onSelect, onClear }: CellImageControlProps) {
+export function CellImageControl({ image, onSelect, onPreview, onClear }: CellImageControlProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -28,24 +24,31 @@ export function CellImageControl({ image, onSelect, onClear }: CellImageControlP
       return;
     }
 
-    const size = await readImageSize(file);
-    await onSelect(file, size);
+    await onSelect(file);
   }
 
   return (
     <>
       {image ? (
-        <button className="cellImageBadge" type="button" title={`${image.name} 삭제`} onClick={() => void onClear()}>
-          <ImageIcon size={14} />
-          이미지
-        </button>
+        <div className="cellImageCard">
+          <button className="cellImagePreviewButton" type="button" title={image.name} onClick={() => void onPreview()}>
+            <ImageIcon size={14} />
+            <span>{image.name || "이미지"}</span>
+          </button>
+          <button
+            className="cellImageRemoveButton"
+            type="button"
+            title="이미지 삭제"
+            onClick={(event) => {
+              event.stopPropagation();
+              void onClear();
+            }}
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       ) : (
-        <button
-          className="cellImageButton"
-          type="button"
-          title="이미지 넣기"
-          onClick={() => inputRef.current?.click()}
-        >
+        <button className="cellImageButton" type="button" title="이미지 넣기" onClick={() => inputRef.current?.click()}>
           <ImageIcon size={14} />
         </button>
       )}
@@ -58,21 +61,4 @@ export function CellImageControl({ image, onSelect, onClear }: CellImageControlP
       />
     </>
   );
-}
-
-function readImageSize(file: File): Promise<ImageSize> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    const url = URL.createObjectURL(file);
-
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve({ width: image.naturalWidth, height: image.naturalHeight });
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("이미지 크기를 읽지 못했습니다."));
-    };
-    image.src = url;
-  });
 }
