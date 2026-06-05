@@ -1,5 +1,5 @@
 ﻿import { Fragment, useEffect, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent } from "react";
+import type { CSSProperties, ClipboardEvent, DragEvent } from "react";
 import type { User } from "firebase/auth";
 import {
   Copy,
@@ -8,6 +8,7 @@ import {
   Loader2,
   LogOut,
   Plus,
+  GripVertical,
   RotateCcw,
   Trash2,
   Upload,
@@ -35,6 +36,12 @@ type BusyFeedback = {
 type CellImagePreview = {
   name: string;
   url: string;
+};
+
+type UploadNotice = {
+  tone: "success" | "error";
+  title: string;
+  description: string;
 };
 
 type SheetCellPoint = {
@@ -81,6 +88,9 @@ export function App() {
   const [sheetSelection, setSheetSelection] = useState<SheetSelection>();
   const [sheetZoom, setSheetZoom] = useState(1);
   const [imagePreview, setImagePreview] = useState<CellImagePreview>();
+  const [pdfDropTarget, setPdfDropTarget] = useState<string>();
+  const [uploadNotice, setUploadNotice] = useState<UploadNotice>();
+  const [draggingRowId, setDraggingRowId] = useState<string>();
   // undefined = 인증 확인 중, null = 로그아웃 상태, User = 로그인됨
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
@@ -88,6 +98,12 @@ export function App() {
   useEffect(() => {
     return watchAuth(setUser);
   }, []);
+
+  useEffect(() => {
+    if (!uploadNotice) return undefined;
+    const timer = window.setTimeout(() => setUploadNotice(undefined), 2200);
+    return () => window.clearTimeout(timer);
+  }, [uploadNotice]);
 
   useEffect(() => {
     if (user || SKIP_LOGIN) {
@@ -240,6 +256,23 @@ export function App() {
     if (!changed) return;
     setRows(nextRows);
     await repository.saveRow(changed);
+  }
+
+  async function moveRow(draggedRowId: string, targetRowId: string) {
+    if (draggedRowId === targetRowId) return;
+
+    const fromIndex = rows.findIndex((row) => row.id === draggedRowId);
+    const toIndex = rows.findIndex((row) => row.id === targetRowId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const nextRows = [...rows];
+    const [movedRow] = nextRows.splice(fromIndex, 1);
+    nextRows.splice(toIndex, 0, movedRow);
+    const reorderedRows = nextRows.map((row, index) => ({ ...row, createdAt: index }));
+    const changedRows = reorderedRows.filter((row, index) => row.createdAt !== rows[index]?.createdAt || row.id !== rows[index]?.id);
+
+    setRows(reorderedRows);
+    await Promise.all(changedRows.map((row) => repository.saveRow(row)));
   }
 
   async function deleteRow(rowId: string) {
@@ -495,15 +528,36 @@ export function App() {
   }
 
   async function uploadCellImage(column: ValueColumn, rowId: string, file: File) {
-    const optimized = await optimizeImageFile(file);
-    const changed = await repository.saveCellImage(column, rowId, optimized.file, {
-      name: optimized.name,
-      contentType: optimized.contentType,
-      width: optimized.width,
-      height: optimized.height,
-      updatedAt: Date.now(),
+    setBusyFeedback({
+      title: "이미지 넣는 중",
+      description: `${file.name} 파일을 최적화하고 저장하고 있습니다.`,
     });
-    setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
+
+    try {
+      const optimized = await optimizeImageFile(file);
+      const changed = await repository.saveCellImage(column, rowId, optimized.file, {
+        name: optimized.name,
+        contentType: optimized.contentType,
+        width: optimized.width,
+        height: optimized.height,
+        updatedAt: Date.now(),
+      });
+      setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
+      setUploadNotice({
+        tone: "success",
+        title: "이미지 입력 완료",
+        description: `${optimized.name} 파일이 들어갔습니다.`,
+      });
+    } catch (error) {
+      console.error("[image-upload] failed", error);
+      setUploadNotice({
+        tone: "error",
+        title: "이미지 입력 실패",
+        description: "파일을 다시 확인해 주세요.",
+      });
+    } finally {
+      setBusyFeedback(undefined);
+    }
   }
 
   async function clearCellImage(column: ValueColumn, rowId: string) {
@@ -534,24 +588,74 @@ export function App() {
 
   async function uploadPdf(columnId: string, pdfRowId: string, file: File | undefined) {
     if (!file) return;
-    if (!(file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))) return;
+    if (!(file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))) {
+      setUploadNotice({
+        tone: "error",
+        title: "PDF 입력 실패",
+        description: "PDF 파일만 넣을 수 있습니다.",
+      });
+      return;
+    }
 
-    const existing = findPdf(columnId, pdfRowId);
-    if (existing) await repository.deleteColumnPdf(existing.id);
+    setBusyFeedback({
+      title: "PDF 넣는 중",
+      description: `${file.name} 파일을 저장하고 있습니다.`,
+    });
 
-    const pdf: ColumnPdf = {
-      id: createId("pdf"),
-      columnId,
-      pdfRowId,
-      name: file.name,
-      file,
-      status: "draft",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+    try {
+      const existing = findPdf(columnId, pdfRowId);
+      if (existing) await repository.deleteColumnPdf(existing.id);
 
-    await repository.saveColumnPdf(pdf);
-    setPdfs((current) => [...current.filter((item) => item.id !== existing?.id), { ...pdf, file: undefined }]);
+      const pdf: ColumnPdf = {
+        id: createId("pdf"),
+        columnId,
+        pdfRowId,
+        name: file.name,
+        file,
+        status: "draft",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      await repository.saveColumnPdf(pdf);
+      setPdfs((current) => [...current.filter((item) => item.id !== existing?.id), { ...pdf, file: undefined }]);
+      setUploadNotice({
+        tone: "success",
+        title: "PDF 입력 완료",
+        description: `${file.name} 파일이 들어갔습니다.`,
+      });
+    } catch (error) {
+      console.error("[pdf-upload] failed", error);
+      setUploadNotice({
+        tone: "error",
+        title: "PDF 입력 실패",
+        description: "파일을 다시 확인해 주세요.",
+      });
+    } finally {
+      setBusyFeedback(undefined);
+    }
+  }
+
+  function pdfDropTargetId(columnId: string, pdfRowId: string) {
+    return `${columnId}:${pdfRowId}`;
+  }
+
+  function handlePdfDragOver(event: DragEvent, columnId: string, pdfRowId: string) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setPdfDropTarget(pdfDropTargetId(columnId, pdfRowId));
+  }
+
+  function handlePdfDragLeave(event: DragEvent) {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setPdfDropTarget(undefined);
+  }
+
+  function handlePdfDrop(event: DragEvent, columnId: string, pdfRowId: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    setPdfDropTarget(undefined);
+    void uploadPdf(columnId, pdfRowId, event.dataTransfer.files[0]);
   }
 
   async function uploadFont(file: File | undefined) {
@@ -804,14 +908,40 @@ export function App() {
             {rows.map((row) => (
               <Fragment key={row.id}>
                 <div
-                  className={`${getSheetCellClass(row.id)} rowLabel stickyCol`}
+                  className={`${getSheetCellClass(row.id)} rowLabel stickyCol${draggingRowId === row.id ? " draggingRow" : ""}`}
                   key={`${row.id}-label`}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return;
                     selectSheetCell({ rowId: row.id });
                   }}
                   onPointerEnter={() => extendSheetSelection({ rowId: row.id })}
+                  onDragOver={(event) => {
+                    if (!draggingRowId) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const sourceRowId = event.dataTransfer.getData("text/plain") || draggingRowId;
+                    setDraggingRowId(undefined);
+                    if (sourceRowId) void moveRow(sourceRowId, row.id);
+                  }}
                 >
+                  <button
+                    className="rowDragHandle"
+                    type="button"
+                    draggable
+                    title="행 위치 이동"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onDragStart={(event) => {
+                      setDraggingRowId(row.id);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", row.id);
+                    }}
+                    onDragEnd={() => setDraggingRowId(undefined)}
+                  >
+                    <GripVertical size={14} />
+                  </button>
                   <input
                     value={row.label}
                     aria-label="항목명"
@@ -961,9 +1091,20 @@ export function App() {
                           </div>
                         </div>
                       ) : (
-                        <label className="pdfUploadSlot">
+                        <label
+                          className={
+                            pdfDropTarget === pdfDropTargetId(column.id, pdfRow.id)
+                              ? "pdfUploadSlot dragging"
+                              : "pdfUploadSlot"
+                          }
+                          onDragOver={(event) => handlePdfDragOver(event, column.id, pdfRow.id)}
+                          onDragEnter={(event) => handlePdfDragOver(event, column.id, pdfRow.id)}
+                          onDragLeave={handlePdfDragLeave}
+                          onDrop={(event) => handlePdfDrop(event, column.id, pdfRow.id)}
+                        >
                           <Upload size={15} />
-                          PDF 넣기
+                          <span>PDF 드롭</span>
+                          <small>또는 클릭</small>
                           <input
                             type="file"
                             accept="application/pdf"
@@ -1023,6 +1164,12 @@ export function App() {
             <strong>{busyFeedback.title}</strong>
             <span>{busyFeedback.description}</span>
           </div>
+        </div>
+      ) : null}
+      {uploadNotice ? (
+        <div className={`uploadToast ${uploadNotice.tone}`} role="status" aria-live="polite">
+          <strong>{uploadNotice.title}</strong>
+          <span>{uploadNotice.description}</span>
         </div>
       ) : null}
     </main>

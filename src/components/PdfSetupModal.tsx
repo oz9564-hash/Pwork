@@ -54,8 +54,11 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
 
+  const firstRowId = rows[0]?.id ?? "";
+
   useEffect(() => {
     let alive = true;
+    let loadedDocument: PDFDocumentProxy | undefined;
 
     async function loadPdf() {
       try {
@@ -66,13 +69,13 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
           repository.getColumnPdfFile(pdf.id),
         ]);
         const bytes = await file.arrayBuffer();
-        const loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+        loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
 
         if (!alive) return;
         setAreas(loadedAreas);
         setPdfDocument(loadedDocument);
         setPageCount(loadedDocument.numPages);
-        setSelectedRowId(rows[0]?.id ?? "");
+        setSelectedRowId(firstRowId);
       } catch (loadError) {
         if (!alive) return;
         setError(loadError instanceof Error ? loadError.message : "PDF load failed.");
@@ -84,8 +87,9 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
     void loadPdf();
     return () => {
       alive = false;
+      void loadedDocument?.destroy();
     };
-  }, [pdf, rows]);
+  }, [pdf.id, firstRowId]);
 
   useEffect(() => {
     if (!pdfDocument) return;
