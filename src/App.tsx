@@ -37,9 +37,7 @@ type BusyFeedback = {
 
 type SheetCellPoint = {
   rowId: string;
-  rowIndex: number;
   columnId?: string;
-  columnIndex: number;
 };
 
 type SheetSelection = {
@@ -94,6 +92,7 @@ export function App() {
     setPdfRows([]);
     setPdfs([]);
     setFont(undefined);
+    setSheetSelection(undefined);
   }, [user]);
 
   async function handleSignIn() {
@@ -147,6 +146,7 @@ export function App() {
     setPdfRows(storedPdfRows.sort((a, b) => a.createdAt - b.createdAt));
     setPdfs(storedPdfs.sort((a, b) => a.createdAt - b.createdAt));
     setFont(storedFont);
+    setSheetSelection(undefined);
   }
 
   async function createStarterSheet() {
@@ -217,6 +217,9 @@ export function App() {
 
   async function deleteRow(rowId: string) {
     await repository.deleteRow(rowId);
+    setSheetSelection((current) =>
+      current?.anchor.rowId === rowId || current?.focus.rowId === rowId ? undefined : current,
+    );
     setRows((current) => current.filter((row) => row.id !== rowId));
     setColumns((current) =>
       current.map((column) => {
@@ -326,15 +329,17 @@ export function App() {
   async function pasteSheetCells(startRowId: string, startColumnId: string | undefined, cells: string[][]) {
     if (!isMultiCellPaste(cells)) return;
 
-    const startRowIndex = Math.max(0, rows.findIndex((row) => row.id === startRowId));
-    const startColumnIndex = startColumnId ? Math.max(0, columns.findIndex((column) => column.id === startColumnId)) : -1;
+    const startRowIndex = rows.findIndex((row) => row.id === startRowId);
+    const startColumnIndex = startColumnId ? columns.findIndex((column) => column.id === startColumnId) : -1;
+    if (startRowIndex < 0 || (startColumnId && startColumnIndex < 0)) return;
+
     const labelPaste = startColumnIndex === -1;
     const valueWidth = Math.max(...cells.map((row) => Math.max(0, row.length - (labelPaste ? 1 : 0))));
     const targetRowCount = startRowIndex + cells.length;
     const targetColumnCount = labelPaste ? valueWidth : startColumnIndex + valueWidth;
     const now = Date.now();
 
-    const nextRows = [...rows];
+    const nextRows = rows.map((row) => ({ ...row }));
     while (nextRows.length < targetRowCount) {
       nextRows.push({
         id: createId("row"),
@@ -343,7 +348,11 @@ export function App() {
       });
     }
 
-    const nextColumns = [...columns];
+    const nextColumns: ValueColumn[] = columns.map((column) => ({
+      ...column,
+      values: { ...column.values },
+      ...(column.images ? { images: { ...column.images } } : {}),
+    }));
     while (nextColumns.length < targetColumnCount) {
       const index = nextColumns.length;
       nextColumns.push({
@@ -383,15 +392,11 @@ export function App() {
     setSheetSelection({
       anchor: {
         rowId: nextRows[startRowIndex].id,
-        rowIndex: startRowIndex,
         columnId: labelPaste ? undefined : nextColumns[startColumnIndex]?.id,
-        columnIndex: labelPaste ? -1 : startColumnIndex,
       },
       focus: {
         rowId: nextRows[targetRowCount - 1].id,
-        rowIndex: targetRowCount - 1,
         columnId: targetColumnCount > 0 ? nextColumns[targetColumnCount - 1]?.id : undefined,
-        columnIndex: labelPaste && valueWidth === 0 ? -1 : targetColumnCount - 1,
       },
     });
     await Promise.all([
@@ -424,16 +429,38 @@ export function App() {
     setSheetSelection((current) => (current ? { ...current, focus: point } : { anchor: point, focus: point }));
   }
 
-  function getSheetCellClass(rowIndex: number, columnIndex: number) {
+  function getSheetPointIndexes(point: SheetCellPoint) {
+    return {
+      rowIndex: rows.findIndex((row) => row.id === point.rowId),
+      columnIndex: point.columnId ? columns.findIndex((column) => column.id === point.columnId) : -1,
+    };
+  }
+
+  function getSheetCellClass(rowId: string, columnId?: string) {
     const classes = ["sheetCell"];
     if (!sheetSelection) return classes.join(" ");
 
-    const minRow = Math.min(sheetSelection.anchor.rowIndex, sheetSelection.focus.rowIndex);
-    const maxRow = Math.max(sheetSelection.anchor.rowIndex, sheetSelection.focus.rowIndex);
-    const minColumn = Math.min(sheetSelection.anchor.columnIndex, sheetSelection.focus.columnIndex);
-    const maxColumn = Math.max(sheetSelection.anchor.columnIndex, sheetSelection.focus.columnIndex);
-    const selected = rowIndex >= minRow && rowIndex <= maxRow && columnIndex >= minColumn && columnIndex <= maxColumn;
-    const active = sheetSelection.anchor.rowIndex === rowIndex && sheetSelection.anchor.columnIndex === columnIndex;
+    const cellRowIndex = rows.findIndex((row) => row.id === rowId);
+    const cellColumnIndex = columnId ? columns.findIndex((column) => column.id === columnId) : -1;
+    const anchor = getSheetPointIndexes(sheetSelection.anchor);
+    const focus = getSheetPointIndexes(sheetSelection.focus);
+    if (
+      cellRowIndex < 0 ||
+      (columnId && cellColumnIndex < 0) ||
+      anchor.rowIndex < 0 ||
+      focus.rowIndex < 0 ||
+      (sheetSelection.anchor.columnId && anchor.columnIndex < 0) ||
+      (sheetSelection.focus.columnId && focus.columnIndex < 0)
+    ) {
+      return classes.join(" ");
+    }
+
+    const minRow = Math.min(anchor.rowIndex, focus.rowIndex);
+    const maxRow = Math.max(anchor.rowIndex, focus.rowIndex);
+    const minColumn = Math.min(anchor.columnIndex, focus.columnIndex);
+    const maxColumn = Math.max(anchor.columnIndex, focus.columnIndex);
+    const selected = cellRowIndex >= minRow && cellRowIndex <= maxRow && cellColumnIndex >= minColumn && cellColumnIndex <= maxColumn;
+    const active = sheetSelection.anchor.rowId === rowId && sheetSelection.anchor.columnId === columnId;
 
     if (selected) classes.push("selectedSheetCell");
     if (active) classes.push("activeSheetCell");
@@ -458,6 +485,9 @@ export function App() {
 
   async function deleteColumn(columnId: string) {
     await repository.deleteColumn(columnId);
+    setSheetSelection((current) =>
+      current?.anchor.columnId === columnId || current?.focus.columnId === columnId ? undefined : current,
+    );
     setColumns((current) => current.filter((column) => column.id !== columnId));
     setPdfs((current) => current.filter((pdf) => pdf.columnId !== columnId));
   }
@@ -725,22 +755,22 @@ export function App() {
               </button>
             </div>
 
-            {rows.map((row, rowIndex) => (
+            {rows.map((row) => (
               <Fragment key={row.id}>
                 <div
-                  className={`${getSheetCellClass(rowIndex, -1)} rowLabel stickyCol`}
+                  className={`${getSheetCellClass(row.id)} rowLabel stickyCol`}
                   key={`${row.id}-label`}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return;
-                    selectSheetCell({ rowId: row.id, rowIndex, columnIndex: -1 });
+                    selectSheetCell({ rowId: row.id });
                   }}
-                  onPointerEnter={() => extendSheetSelection({ rowId: row.id, rowIndex, columnIndex: -1 })}
+                  onPointerEnter={() => extendSheetSelection({ rowId: row.id })}
                 >
                   <input
                     value={row.label}
                     aria-label="항목명"
                     placeholder="항목"
-                    onFocus={() => focusSheetCell({ rowId: row.id, rowIndex, columnIndex: -1 })}
+                    onFocus={() => focusSheetCell({ rowId: row.id })}
                     onPaste={(event) => handleSheetPaste(event, row.id)}
                     onChange={(event) => void updateRow(row.id, event.target.value)}
                   />
@@ -748,15 +778,15 @@ export function App() {
                     <Trash2 size={14} />
                   </button>
                 </div>
-                {columns.map((column, columnIndex) => (
+                {columns.map((column) => (
                   <div
-                    className={`${getSheetCellClass(rowIndex, columnIndex)} valueCell`}
+                    className={`${getSheetCellClass(row.id, column.id)} valueCell`}
                     key={`${row.id}-${column.id}`}
                     onPointerDown={(event) => {
                       if (event.button !== 0) return;
-                      selectSheetCell({ rowId: row.id, rowIndex, columnId: column.id, columnIndex });
+                      selectSheetCell({ rowId: row.id, columnId: column.id });
                     }}
-                    onPointerEnter={() => extendSheetSelection({ rowId: row.id, rowIndex, columnId: column.id, columnIndex })}
+                    onPointerEnter={() => extendSheetSelection({ rowId: row.id, columnId: column.id })}
                   >
                     <div className="cellValueWrap">
                       <input
@@ -764,7 +794,7 @@ export function App() {
                         value={column.values[row.id] ?? ""}
                         aria-label={`${column.name} ${row.label}`}
                         placeholder="값 입력"
-                        onFocus={() => focusSheetCell({ rowId: row.id, rowIndex, columnId: column.id, columnIndex })}
+                        onFocus={() => focusSheetCell({ rowId: row.id, columnId: column.id })}
                         onPaste={(event) => handleSheetPaste(event, row.id, column.id)}
                         onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
                       />
