@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { ChevronLeft, ChevronRight, Eye, Plus, Save, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { createId } from "../lib/ids";
 import { repository } from "../services/storage";
 import type { ColumnPdf, FieldRow, FontAsset, PdfArea, ValueColumn } from "../types";
@@ -34,9 +34,10 @@ type Props = {
   font?: FontAsset;
   onClose: () => void;
   onSaved: (areas: PdfArea[]) => void;
+  onReset: () => void;
 };
 
-export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Props) {
+export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onReset }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -446,6 +447,10 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
             {selectedRow ? ` · 선택 항목: ${selectedRow.label || "항목 없음"}` : ""}
           </span>
           <div>
+            <button className="button danger" type="button" onClick={onReset}>
+              <RotateCcw size={16} />
+              세팅 해제
+            </button>
             <button className="button secondary" type="button" disabled={normalizedAreas.length === 0} onClick={togglePreview}>
               <Eye size={16} />
               {previewMode ? "편집 보기" : "미리보기"}

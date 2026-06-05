@@ -239,6 +239,7 @@ button:disabled {
 .columnTools button:focus-visible,
 .rowLabel button:focus-visible,
 .pdfCardActions button:focus-visible,
+.pdfCardDeleteButton:focus-visible,
 .pdfCard:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -838,6 +839,7 @@ button:disabled {
 }
 
 .pdfCard {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-2);
@@ -850,6 +852,35 @@ button:disabled {
   padding: var(--space-2);
   cursor: pointer;
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.pdfCardDeleteButton {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--danger-border);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--danger);
+  opacity: 0;
+  box-shadow: 0 6px 14px rgb(15 23 42 / 0.12);
+  transition: opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.pdfCard:hover .pdfCardDeleteButton,
+.pdfCard:focus-within .pdfCardDeleteButton {
+  opacity: 1;
+}
+
+.pdfCardDeleteButton:hover {
+  border-color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .pdfCard:hover {

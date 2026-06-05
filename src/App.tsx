@@ -9,7 +9,6 @@ import {
   LogOut,
   Plus,
   GripVertical,
-  RotateCcw,
   Trash2,
   Upload,
   X,
@@ -333,31 +332,81 @@ export function App() {
       const copiedPdfs: ColumnPdf[] = [];
 
       for (const sourcePdf of sourcePdfs) {
-        const file = await repository.getColumnPdfFile(sourcePdf.id);
-        const copiedPdf: ColumnPdf = {
-          ...sourcePdf,
-          id: createId("pdf"),
-          columnId: copiedColumn.id,
-          file,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        await repository.saveColumnPdf(copiedPdf);
-        copiedPdfs.push({ ...copiedPdf, file: undefined });
-
-        const sourceAreas = await repository.getAreas(sourcePdf.id);
-        const copiedAreas = sourceAreas.map((area): PdfArea => ({
-          ...area,
-          id: createId("area"),
-          columnPdfId: copiedPdf.id,
-        }));
-        await repository.replaceAreas(copiedPdf.id, copiedAreas);
+        copiedPdfs.push(await copyPdfToColumn(sourcePdf, copiedColumn.id));
       }
 
       setColumns((current) => [...current, copiedColumn]);
       setPdfs((current) => [...current, ...copiedPdfs]);
     } catch (error) {
       console.error("[column-duplicate] failed", error);
+    } finally {
+      setBusyId(undefined);
+      setBusyFeedback(undefined);
+    }
+  }
+
+  async function copyPdfToColumn(sourcePdf: ColumnPdf, targetColumnId: string) {
+    const existing = findPdf(targetColumnId, sourcePdf.pdfRowId);
+    if (existing) await repository.deleteColumnPdf(existing.id);
+
+    const file = await repository.getColumnPdfFile(sourcePdf.id);
+    const copiedPdf: ColumnPdf = {
+      ...sourcePdf,
+      id: createId("pdf"),
+      columnId: targetColumnId,
+      file,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    await repository.saveColumnPdf(copiedPdf);
+
+    const sourceAreas = await repository.getAreas(sourcePdf.id);
+    const copiedAreas = sourceAreas.map((area): PdfArea => ({
+      ...area,
+      id: createId("area"),
+      columnPdfId: copiedPdf.id,
+    }));
+    await repository.replaceAreas(copiedPdf.id, copiedAreas);
+
+    return { ...copiedPdf, file: undefined };
+  }
+
+  async function copyPdfToRight(column: ValueColumn, pdf: ColumnPdf) {
+    const columnIndex = columns.findIndex((item) => item.id === column.id);
+    const targetColumn = columns[columnIndex + 1];
+    if (!targetColumn) {
+      setUploadNotice({
+        tone: "error",
+        title: "PDF 복사 실패",
+        description: "오른쪽 열이 없습니다.",
+      });
+      return;
+    }
+
+    setBusyId(pdf.id);
+    setBusyFeedback({
+      title: "PDF 복사 중",
+      description: `${targetColumn.name} 열로 PDF와 위치를 복사하고 있습니다.`,
+    });
+
+    try {
+      const copiedPdf = await copyPdfToColumn(pdf, targetColumn.id);
+      setPdfs((current) => [
+        ...current.filter((item) => !(item.columnId === targetColumn.id && item.pdfRowId === pdf.pdfRowId)),
+        copiedPdf,
+      ]);
+      setUploadNotice({
+        tone: "success",
+        title: "PDF 복사 완료",
+        description: `${targetColumn.name} 열에 같은 위치로 복사했습니다.`,
+      });
+    } catch (error) {
+      console.error("[pdf-copy] failed", error);
+      setUploadNotice({
+        tone: "error",
+        title: "PDF 복사 실패",
+        description: "PDF 파일을 다시 확인해 주세요.",
+      });
     } finally {
       setBusyId(undefined);
       setBusyFeedback(undefined);
@@ -1049,10 +1098,32 @@ export function App() {
                             if (event.key === "Enter" || event.key === " ") setActiveSetup({ column, pdf });
                           }}
                         >
+                          <button
+                            className="pdfCardDeleteButton"
+                            type="button"
+                            title="PDF 삭제"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void deletePdf(pdf);
+                            }}
+                          >
+                            <X size={13} />
+                          </button>
                           <span>
                             {pdf.name} ({pdf.status === "ready" ? "세팅 완료" : "세팅 전"})
                           </span>
                           <div className="pdfCardActions">
+                            <button
+                              type="button"
+                              title="오른쪽 열로 PDF 복사"
+                              disabled={busyId === pdf.id}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void copyPdfToRight(column, pdf);
+                              }}
+                            >
+                              <Copy size={14} />
+                            </button>
                             {pdf.status === "ready" ? (
                               <>
                                 <button
@@ -1066,28 +1137,8 @@ export function App() {
                                 >
                                   <FileDown size={14} />
                                 </button>
-                                <button
-                                  type="button"
-                                  title="세팅 해제"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void resetSetup(pdf);
-                                  }}
-                                >
-                                  <RotateCcw size={14} />
-                                </button>
                               </>
                             ) : null}
-                            <button
-                              type="button"
-                              title="PDF 삭제"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void deletePdf(pdf);
-                              }}
-                            >
-                              <Trash2 size={14} />
-                            </button>
                           </div>
                         </div>
                       ) : (
@@ -1140,6 +1191,10 @@ export function App() {
           font={font}
           onClose={() => setActiveSetup(undefined)}
           onSaved={(areas) => void completeSetup(activeSetup.pdf.id, areas)}
+          onReset={() => {
+            void resetSetup(activeSetup.pdf);
+            setActiveSetup(undefined);
+          }}
         />
       ) : null}
       {imagePreview ? (
