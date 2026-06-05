@@ -49,6 +49,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
   const [selectedRowId, setSelectedRowId] = useState("");
   const [selectedAreaId, setSelectedAreaId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [previewMode, setPreviewMode] = useState(false);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
@@ -57,20 +58,27 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
     let alive = true;
 
     async function loadPdf() {
-      setLoading(true);
-      const [loadedAreas, file] = await Promise.all([
-        repository.getAreas(pdf.id),
-        repository.getColumnPdfFile(pdf.id),
-      ]);
-      const bytes = await file.arrayBuffer();
-      const loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+      try {
+        setLoading(true);
+        setError("");
+        const [loadedAreas, file] = await Promise.all([
+          repository.getAreas(pdf.id),
+          repository.getColumnPdfFile(pdf.id),
+        ]);
+        const bytes = await file.arrayBuffer();
+        const loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
 
-      if (!alive) return;
-      setAreas(loadedAreas);
-      setPdfDocument(loadedDocument);
-      setPageCount(loadedDocument.numPages);
-      setSelectedRowId(rows[0]?.id ?? "");
-      setLoading(false);
+        if (!alive) return;
+        setAreas(loadedAreas);
+        setPdfDocument(loadedDocument);
+        setPageCount(loadedDocument.numPages);
+        setSelectedRowId(rows[0]?.id ?? "");
+      } catch (loadError) {
+        if (!alive) return;
+        setError(loadError instanceof Error ? loadError.message : "PDF load failed.");
+      } finally {
+        if (alive) setLoading(false);
+      }
     }
 
     void loadPdf();
@@ -145,15 +153,19 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
 
     async function loadImages() {
       const entries = await Promise.all(
-        Object.keys(column.images ?? {}).map(async (rowId) => {
-          const file = await repository.getCellImageFile(column.id, rowId);
-          const url = URL.createObjectURL(file);
-          urls.push(url);
-          return [rowId, url] as const;
+        Object.entries(column.images ?? {}).map(async ([rowId, image]) => {
+          try {
+            const file = await repository.getCellImageFile(column.id, rowId, image);
+            const url = URL.createObjectURL(file);
+            urls.push(url);
+            return [rowId, url] as const;
+          } catch {
+            return undefined;
+          }
         }),
       );
 
-      if (alive) setImageUrls(Object.fromEntries(entries));
+      if (alive) setImageUrls(Object.fromEntries(entries.filter((entry) => entry !== undefined)));
     }
 
     void loadImages();
@@ -396,6 +408,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved }: Pro
 
             <div className="pdfScroll">
               {loading ? <div className="loading">PDF 로딩 중</div> : null}
+              {error ? <div className="loading">{error}</div> : null}
               <div className="pdfCanvasBox" style={{ width: size.width, height: size.height }}>
                 <canvas ref={canvasRef} />
                 {previewMode ? (

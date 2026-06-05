@@ -16,6 +16,7 @@ export type ValueColumn = {
 export type CellImageAsset = {
   name: string;
   contentType: "image/png" | "image/jpeg";
+  storagePath?: string;
   width: number;
   height: number;
   updatedAt: number;

@@ -40,8 +40,16 @@ function fontFileRef(uid: string) {
   return ref(storage, `users/${uid}/font/${FONT_KEY}`);
 }
 
+function cellImagePath(uid: string, columnId: string, rowId: string) {
+  return `users/${uid}/images/${columnId}/${rowId}`;
+}
+
 function cellImageRef(uid: string, columnId: string, rowId: string) {
-  return ref(storage, `users/${uid}/images/${columnId}/${rowId}`);
+  return ref(storage, cellImagePath(uid, columnId, rowId));
+}
+
+function cellImageAssetRef(uid: string, columnId: string, rowId: string, image?: CellImageAsset) {
+  return ref(storage, image?.storagePath ?? cellImagePath(uid, columnId, rowId));
 }
 
 async function readAll<T>(name: CollectionName) {
@@ -75,7 +83,7 @@ export const repository = {
       getDocs(col("valueColumns")),
       getDocs(col("columnPdfAreas")),
     ]);
-    const removedImageColumnIds: string[] = [];
+    const removedImages: Array<{ columnId: string; image: CellImageAsset }> = [];
 
     const batch = writeBatch(db);
     batch.delete(docRef("fieldRows", rowId));
@@ -84,7 +92,7 @@ export const repository = {
       const column = entry.data() as ValueColumn;
       const { [rowId]: _removed, ...values } = column.values;
       const { [rowId]: removedImage, ...images } = column.images ?? {};
-      if (removedImage) removedImageColumnIds.push(column.id);
+      if (removedImage) removedImages.push({ columnId: column.id, image: removedImage });
       if (rowId in column.values || removedImage) {
         batch.update(entry.ref, { values, images, updatedAt: Date.now() });
       }
@@ -96,8 +104,8 @@ export const repository = {
 
     await batch.commit();
     await Promise.all(
-      removedImageColumnIds.map((columnId) =>
-        deleteObject(cellImageRef(uid, columnId, rowId)).catch(() => undefined),
+      removedImages.map(({ columnId, image }) =>
+        deleteObject(cellImageAssetRef(uid, columnId, rowId, image)).catch(() => undefined),
       ),
     );
   },
@@ -168,8 +176,8 @@ export const repository = {
       removedPdfIds.map((id) => deleteObject(pdfFileRef(uid, id)).catch(() => undefined)),
     );
     await Promise.all(
-      Object.keys(column?.images ?? {}).map((rowId) =>
-        deleteObject(cellImageRef(uid, columnId, rowId)).catch(() => undefined),
+      Object.entries(column?.images ?? {}).map(([rowId, image]) =>
+        deleteObject(cellImageAssetRef(uid, columnId, rowId, image)).catch(() => undefined),
       ),
     );
   },
@@ -192,12 +200,15 @@ export const repository = {
   },
 
   async saveCellImage(column: ValueColumn, rowId: string, file: Blob, image: CellImageAsset) {
+    const uid = requireUid();
+    const storagePath = cellImagePath(uid, column.id, rowId);
+    const nextImage: CellImageAsset = { ...image, storagePath };
     const nextColumn: ValueColumn = {
       ...column,
-      images: { ...(column.images ?? {}), [rowId]: image },
+      images: { ...(column.images ?? {}), [rowId]: nextImage },
       updatedAt: Date.now(),
     };
-    await uploadBytes(cellImageRef(requireUid(), column.id, rowId), file, {
+    await uploadBytes(ref(storage, storagePath), file, {
       contentType: image.contentType,
     });
     await setDoc(docRef("valueColumns", column.id), nextColumn);
@@ -212,12 +223,12 @@ export const repository = {
       updatedAt: Date.now(),
     };
     await setDoc(docRef("valueColumns", column.id), nextColumn);
-    await deleteObject(cellImageRef(requireUid(), column.id, rowId)).catch(() => undefined);
+    await deleteObject(cellImageAssetRef(requireUid(), column.id, rowId, _removed)).catch(() => undefined);
     return nextColumn;
   },
 
-  async getCellImageFile(columnId: string, rowId: string) {
-    return getBlob(cellImageRef(requireUid(), columnId, rowId));
+  async getCellImageFile(columnId: string, rowId: string, image?: CellImageAsset) {
+    return getBlob(cellImageAssetRef(requireUid(), columnId, rowId, image));
   },
 
   async deleteColumnPdf(columnPdfId: string) {

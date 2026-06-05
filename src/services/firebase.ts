@@ -50,7 +50,7 @@ export function watchAuth(callback: (user: User | null) => void) {
 }
 
 /** 로그인 임시 비활성화 스위치. true면 로그인 화면을 건너뛰고 바로 앱을 보여준다. */
-export const SKIP_LOGIN = true;
+export const SKIP_LOGIN = false;
 
 /** 로그인 비활성화 상태에서 데이터가 저장될 임시 UID. */
 const LOCAL_DEV_UID = "local-dev";

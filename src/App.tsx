@@ -1,17 +1,17 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+﻿import { Fragment, useEffect, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import {
   Copy,
   FileDown,
   FileText,
-  Image as ImageIcon,
-  Info,
+  Loader2,
   LogOut,
   Plus,
   RotateCcw,
   Trash2,
   Upload,
 } from "lucide-react";
+import { CellImageControl } from "./components/CellImageControl";
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { createId } from "./lib/ids";
 import { exportPdf } from "./services/pdfExport";
@@ -19,12 +19,17 @@ import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services
 import { repository } from "./services/storage";
 import type { ColumnPdf, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "./types";
 
+type ImageSize = {
+  width: number;
+  height: number;
+};
+
 type ActiveSetup = {
   column: ValueColumn;
   pdf: ColumnPdf;
 };
 
-const initialRows = ["이름", "비밀번호"];
+const initialRows = ["?대쫫", "鍮꾨?踰덊샇"];
 
 export function App() {
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
@@ -36,8 +41,7 @@ export function App() {
   const [font, setFont] = useState<FontAsset>();
   const [activeSetup, setActiveSetup] = useState<ActiveSetup>();
   const [busyId, setBusyId] = useState<string>();
-  const [message, setMessage] = useState("열마다 값과 PDF가 클라우드에 저장됩니다.");
-  // undefined = 인증 확인 중, null = 로그아웃 상태, User = 로그인됨
+  // undefined = ?몄쬆 ?뺤씤 以? null = 濡쒓렇?꾩썐 ?곹깭, User = 濡쒓렇?몃맖
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
 
@@ -50,8 +54,7 @@ export function App() {
       void load();
       return;
     }
-    // 로그아웃 시 메모리에 남은 데이터 비우기
-    setRows([]);
+    // 濡쒓렇?꾩썐 ??硫붾え由ъ뿉 ?⑥? ?곗씠??鍮꾩슦湲?    setRows([]);
     setColumns([]);
     setPdfRows([]);
     setPdfs([]);
@@ -63,7 +66,7 @@ export function App() {
     try {
       await signInWithGoogle();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "로그인에 실패했습니다.");
+      console.error("[auth] sign in failed", error);
     } finally {
       setAuthBusy(false);
     }
@@ -71,7 +74,6 @@ export function App() {
 
   async function handleSignOut() {
     await signOutUser();
-    setMessage("로그아웃했습니다.");
   }
 
   useEffect(() => {
@@ -120,7 +122,7 @@ export function App() {
     }));
     const column: ValueColumn = {
       id: createId("col"),
-      name: "값 A",
+      name: "媛?A",
       values: {
         [nextRows[0].id]: "홍길동",
         [nextRows[1].id]: "1113",
@@ -133,7 +135,6 @@ export function App() {
     await repository.saveColumn(column);
     setRows(nextRows);
     setColumns([column]);
-    setMessage("기본 표를 만들었습니다.");
   }
 
   async function addRow() {
@@ -195,7 +196,7 @@ export function App() {
     const index = columns.length;
     const column: ValueColumn = {
       id: createId("col"),
-      name: `값 ${String.fromCharCode(65 + index)}`,
+      name: `媛?${String.fromCharCode(65 + index)}`,
       values: {},
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -208,7 +209,7 @@ export function App() {
     const now = Date.now();
     let copiedColumn: ValueColumn = {
       id: createId("col"),
-      name: `${source.name} 복사`,
+      name: `${source.name} 蹂듭궗`,
       values: { ...source.values },
       images: {},
       createdAt: now,
@@ -218,7 +219,7 @@ export function App() {
     await repository.saveColumn(copiedColumn);
 
     for (const [rowId, image] of Object.entries(source.images ?? {})) {
-      const file = await repository.getCellImageFile(source.id, rowId);
+      const file = await repository.getCellImageFile(source.id, rowId, image);
       copiedColumn = await repository.saveCellImage(copiedColumn, rowId, file, image);
     }
 
@@ -249,7 +250,6 @@ export function App() {
 
     setColumns((current) => [...current, copiedColumn]);
     setPdfs((current) => [...current, ...copiedPdfs]);
-    setMessage(`${source.name} 열을 통째로 복사했습니다.`);
   }
 
   async function updateColumnName(columnId: string, name: string) {
@@ -274,36 +274,26 @@ export function App() {
     await repository.saveColumn(changed);
   }
 
-  async function uploadCellImage(column: ValueColumn, rowId: string, file: File | undefined) {
-    if (!file) return;
-    if (!(file.type === "image/png" || file.type === "image/jpeg")) {
-      setMessage("PNG 또는 JPG 이미지만 넣을 수 있습니다.");
-      return;
-    }
-
-    const size = await readImageSize(file);
+  async function uploadCellImage(column: ValueColumn, rowId: string, file: File, size: ImageSize) {
     const changed = await repository.saveCellImage(column, rowId, file, {
       name: file.name,
-      contentType: file.type,
+      contentType: file.type as "image/png" | "image/jpeg",
       width: size.width,
       height: size.height,
       updatedAt: Date.now(),
     });
     setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
-    setMessage(`${column.name} 셀에 이미지를 넣었습니다.`);
   }
 
   async function clearCellImage(column: ValueColumn, rowId: string) {
     const changed = await repository.clearCellImage(column, rowId);
     setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
-    setMessage(`${column.name} 셀의 이미지를 삭제했습니다.`);
   }
 
   async function deleteColumn(columnId: string) {
     await repository.deleteColumn(columnId);
     setColumns((current) => current.filter((column) => column.id !== columnId));
     setPdfs((current) => current.filter((pdf) => pdf.columnId !== columnId));
-    setMessage("열을 삭제했습니다.");
   }
 
   async function uploadPdf(columnId: string, pdfRowId: string, file: File | undefined) {
@@ -326,7 +316,6 @@ export function App() {
 
     await repository.saveColumnPdf(pdf);
     setPdfs((current) => [...current.filter((item) => item.id !== existing?.id), { ...pdf, file: undefined }]);
-    setMessage("PDF 셀에 파일을 넣었습니다.");
   }
 
   async function uploadFont(file: File | undefined) {
@@ -339,13 +328,11 @@ export function App() {
     };
     await repository.saveFont(nextFont);
     setFont(nextFont);
-    setMessage("한글 출력 폰트를 저장했습니다.");
   }
 
   async function clearFont() {
     await repository.clearFont();
     setFont(undefined);
-    setMessage("폰트 설정을 해제했습니다.");
   }
 
   async function completeSetup(columnPdfId: string, areas?: PdfArea[]) {
@@ -354,14 +341,12 @@ export function App() {
 
     const savedAreas = areas ?? (await repository.getAreas(columnPdfId));
     if (savedAreas.length === 0) {
-      setMessage("영역이 없어서 세팅 완료로 바꿀 수 없습니다.");
       return;
     }
 
     const updated: ColumnPdf = { ...pdf, status: "ready", updatedAt: Date.now() };
     await repository.saveColumnPdf(updated);
     setPdfs((current) => current.map((item) => (item.id === columnPdfId ? updated : item)));
-    setMessage(`${pdf.name} 세팅을 완료했습니다.`);
   }
 
   async function resetSetup(pdf: ColumnPdf) {
@@ -369,40 +354,77 @@ export function App() {
     await repository.clearAreas(pdf.id);
     await repository.saveColumnPdf(updated);
     setPdfs((current) => current.map((item) => (item.id === pdf.id ? updated : item)));
-    setMessage(`${pdf.name} 세팅을 해제했습니다.`);
   }
 
   async function deletePdf(pdf: ColumnPdf) {
     await repository.deleteColumnPdf(pdf.id);
     setPdfs((current) => current.filter((item) => item.id !== pdf.id));
-    setMessage(`${pdf.name} PDF를 삭제했습니다.`);
   }
 
   async function downloadFilledPdf(column: ValueColumn, pdf: ColumnPdf) {
     setBusyId(pdf.id);
+    console.log("[pdf-download] 1. click", { columnId: column.id, pdfId: pdf.id, pdfName: pdf.name });
     try {
+      console.log("[pdf-download] 2. load areas and source pdf");
       const [areas, file] = await Promise.all([
         repository.getAreas(pdf.id),
         repository.getColumnPdfFile(pdf.id),
       ]);
+      console.log("[pdf-download] 3. loaded source data", { areaCount: areas.length, fileSize: file.size });
+      console.log("[pdf-download] 4. load mapped images");
       const imageEntries = await Promise.all(
         areas
           .filter((area) => column.images?.[area.rowId])
-          .map(async (area) => [area.rowId, await repository.getCellImageFile(column.id, area.rowId)] as const),
+          .map(async (area) => {
+            const image = column.images?.[area.rowId];
+            return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
+          }),
       );
+      console.log("[pdf-download] 5. export pdf start", { imageCount: imageEntries.length });
       await exportPdf({ ...pdf, file }, rows, column, areas, font, Object.fromEntries(imageEntries));
-      setMessage(`${column.name} / ${pdf.name} 결과 PDF를 생성했습니다.`);
+      console.log("[pdf-download] 6. export pdf done");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "PDF 생성에 실패했습니다.");
+      console.error("[pdf-download] failed", error);
     } finally {
+      console.log("[pdf-download] 7. cleanup busy state");
       setBusyId(undefined);
     }
   }
 
-  const hasKorean = useMemo(
-    () => columns.some((column) => Object.values(column.values).some((value) => /[ㄱ-ㅎㅏ-ㅣ가-힣]/.test(value))),
-    [columns],
-  );
+  async function downloadPdfColumn(column: ValueColumn) {
+    const columnPdfs = pdfRows
+      .map((pdfRow) => findPdf(column.id, pdfRow.id))
+      .filter((pdf): pdf is ColumnPdf => Boolean(pdf))
+      .filter((pdf) => pdf.status === "ready");
+
+    if (columnPdfs.length === 0) {
+      return;
+    }
+
+    setBusyId(column.id);
+    try {
+      for (const pdf of columnPdfs) {
+        const [areas, file] = await Promise.all([
+          repository.getAreas(pdf.id),
+          repository.getColumnPdfFile(pdf.id),
+        ]);
+        const imageEntries = await Promise.all(
+          areas
+            .filter((area) => column.images?.[area.rowId])
+            .map(async (area) => {
+              const image = column.images?.[area.rowId];
+              return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
+            }),
+        );
+
+        await exportPdf({ ...pdf, file }, rows, column, areas, font, Object.fromEntries(imageEntries));
+      }
+    } catch (error) {
+      console.error("[pdf-column-download] failed", error);
+    } finally {
+      setBusyId(undefined);
+    }
+  }
 
   function pdfsForColumn(columnId: string) {
     return pdfs.filter((pdf) => pdf.columnId === columnId);
@@ -423,7 +445,7 @@ export function App() {
       <main className="authShell">
         <div className="authCard">
           <FileText size={28} />
-          <p>불러오는 중…</p>
+          <p>불러오는 중</p>
         </div>
       </main>
     );
@@ -436,10 +458,10 @@ export function App() {
           <span className="brandMark" aria-hidden="true">
             <FileText size={24} />
           </span>
-          <h1>PDF 텍스트 매퍼</h1>
-          <p>로그인하면 어느 기기에서든 같은 작업 데이터를 불러올 수 있습니다.</p>
+          <h1>PDF ?띿뒪??留ㅽ띁</h1>
+          <p>濡쒓렇?명븯硫??대뒓 湲곌린?먯꽌??媛숈? ?묒뾽 ?곗씠?곕? 遺덈윭?????덉뒿?덈떎.</p>
           <button className="button primary" type="button" disabled={authBusy} onClick={() => void handleSignIn()}>
-            {authBusy ? "로그인 중…" : "Google로 로그인"}
+            {authBusy ? "로그인 중" : "Google로 로그인"}
           </button>
         </div>
       </main>
@@ -454,12 +476,12 @@ export function App() {
             <FileText size={20} />
           </span>
           <div className="brandText">
-            <h1>PDF 텍스트 매퍼</h1>
-            <p>각 열을 독립 작업 세트로 관리합니다.</p>
+            <h1>PDF ?띿뒪??留ㅽ띁</h1>
+            <p>媛??댁쓣 ?낅┰ ?묒뾽 ?명듃濡?愿由ы빀?덈떎.</p>
           </div>
         </div>
-        <div className="workspaceSummary" aria-label="작업 현황">
-          <span>{rows.length}개 항목</span>
+        <div className="workspaceSummary" aria-label="?묒뾽 ?꾪솴">
+          <span>{rows.length}媛???ぉ</span>
           <span>{columns.length}개 열</span>
           <span>{totalMappedPdfs}/{pdfs.length} PDF</span>
           {user ? (
@@ -475,21 +497,12 @@ export function App() {
         </div>
       </header>
 
-      <section className="notice">
-        <span className="noticeMessage">
-          <Info size={15} />
-          {message}
-        </span>
-        {hasKorean && !font ? <strong>한글 출력 기본 폰트: 휴먼명조 우선, 없으면 바탕</strong> : null}
-      </section>
-
       {rows.length === 0 && columns.length === 0 ? (
         <section className="emptySheet">
           <FileText size={24} />
-          <span>엑셀형 작업 표가 없습니다.</span>
+          <span>?묒????묒뾽 ?쒓? ?놁뒿?덈떎.</span>
           <button className="button primary" type="button" onClick={() => void createStarterSheet()}>
-            기본 표 만들기
-          </button>
+            湲곕낯 ??留뚮뱾湲?          </button>
         </section>
       ) : (
         <section className="sheetWrap">
@@ -499,26 +512,26 @@ export function App() {
               gridTemplateColumns: `220px ${columns.map((column) => `${getColumnWidth(column.id)}px`).join(" ")} minmax(160px, 1fr)`,
             }}
           >
-            <div className="sheetCell sheetHead stickyCol">항목</div>
+            <div className="sheetCell sheetHead stickyCol">??ぉ</div>
             {columns.map((column) => (
               <div className="sheetCell sheetHead columnHead" key={column.id}>
                 <input
                   value={column.name}
-                  aria-label="열 이름"
+                  aria-label="???대쫫"
                   onChange={(event) => void updateColumnName(column.id, event.target.value)}
                 />
                 <div className="columnTools">
-                  <button type="button" title="열 복사" onClick={() => void duplicateColumn(column)}>
+                  <button type="button" title="??蹂듭궗" onClick={() => void duplicateColumn(column)}>
                     <Copy size={15} />
                   </button>
-                  <button type="button" title="열 삭제" onClick={() => void deleteColumn(column.id)}>
+                  <button type="button" title="????젣" onClick={() => void deleteColumn(column.id)}>
                     <Trash2 size={15} />
                   </button>
                 </div>
                 <div
                   className="columnResizeHandle"
                   role="separator"
-                  aria-label="열 너비 조절"
+                  aria-label="???덈퉬 議곗젅"
                   onPointerDown={(event) => {
                     resizeRef.current = {
                       columnId: column.id,
@@ -531,7 +544,7 @@ export function App() {
             ))}
             <div className="sheetCell sheetHead addColumnCell">
               <button className="addSheetButton" type="button" onClick={() => void addColumn()}>
-                <Plus size={16} />열 추가
+                <Plus size={16} />??異붽?
               </button>
             </div>
 
@@ -541,10 +554,10 @@ export function App() {
                   <input
                     value={row.label}
                     aria-label="항목명"
-                    placeholder="항목"
+                    placeholder="??ぉ"
                     onChange={(event) => void updateRow(row.id, event.target.value)}
                   />
-                  <button type="button" title="항목 삭제" onClick={() => void deleteRow(row.id)}>
+                  <button type="button" title="??ぉ ??젣" onClick={() => void deleteRow(row.id)}>
                     <Trash2 size={14} />
                   </button>
                 </div>
@@ -552,36 +565,16 @@ export function App() {
                   <div className="sheetCell valueCell" key={`${row.id}-${column.id}`}>
                     <div className="cellValueWrap">
                       <input
+                        className="cellTextInput"
                         value={column.values[row.id] ?? ""}
                         aria-label={`${column.name} ${row.label}`}
-                        placeholder="값 입력"
+                        placeholder="媛??낅젰"
                         onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
                       />
-                      {column.images?.[row.id] ? (
-                        <button
-                          className="cellImageBadge"
-                          type="button"
-                          title={`${column.images[row.id].name} 삭제`}
-                          onClick={() => void clearCellImage(column, row.id)}
-                        >
-                          <ImageIcon size={14} />
-                          이미지
-                        </button>
-                      ) : (
-                        <label
-                          className="cellImageButton"
-                          htmlFor={`cell-image-${column.id}-${row.id}`}
-                          title="이미지 넣기"
-                        >
-                          <ImageIcon size={14} />
-                        </label>
-                      )}
-                      <input
-                        id={`cell-image-${column.id}-${row.id}`}
-                        className="cellImageInput"
-                        type="file"
-                        accept="image/png,image/jpeg"
-                        onChange={(event) => void uploadCellImage(column, row.id, event.target.files?.[0])}
+                      <CellImageControl
+                        image={column.images?.[row.id]}
+                        onSelect={(file, size) => uploadCellImage(column, row.id, file, size)}
+                        onClear={() => clearCellImage(column, row.id)}
                       />
                     </div>
                   </div>
@@ -592,7 +585,7 @@ export function App() {
 
             <div className="sheetCell addRowLabel stickyCol">
               <button className="addSheetButton" type="button" onClick={() => void addRow()}>
-                <Plus size={16} />행 추가
+                <Plus size={16} />??異붽?
               </button>
             </div>
             {columns.map((column) => (
@@ -600,20 +593,40 @@ export function App() {
             ))}
             <div className="sheetCell emptyAddColumnCell" />
 
-            <div className="sectionBand" style={{ gridColumn: "1 / -1" }}>
+            <div className="sheetCell sectionLabelCell stickyCol">
               <span className="sectionBandLabel">
                 <FileText size={14} />
                 PDF 매핑
               </span>
-              <span className="sectionBandHint">열 머리글 기준으로 정렬됩니다</span>
+              <span className="sectionBandHint">열별 PDF 다운로드</span>
             </div>
+            {columns.map((column) => (
+              <div className="sheetCell sectionDownloadCell" key={`${column.id}-pdf-bulk-download`}>
+                <button
+                  className="columnDownloadButton"
+                  type="button"
+                  disabled={busyId === column.id}
+                  onClick={() => void downloadPdfColumn(column)}
+                >
+                  {busyId === column.id ? (
+                    <>
+                      <Loader2 className="spinIcon" size={13} />
+                      다운로드 중...
+                    </>
+                  ) : (
+                    `${column.name} 일괄 다운로드`
+                  )}
+                </button>
+              </div>
+            ))}
+            <div className="sheetCell sectionDownloadCell" />
 
             {pdfRows.map((pdfRow) => (
               <Fragment key={pdfRow.id}>
                 <div className="sheetCell rowLabel stickyCol">
                   <input
                     value={pdfRow.label}
-                    aria-label="PDF 행 이름"
+                    aria-label="PDF ???대쫫"
                     placeholder="PDF"
                     onChange={(event) => void updatePdfRow(pdfRow.id, event.target.value)}
                   />
@@ -643,7 +656,7 @@ export function App() {
                               <>
                                 <button
                                   type="button"
-                                  title="결과 PDF"
+                                  title="寃곌낵 PDF"
                                   disabled={busyId === pdf.id}
                                   onClick={(event) => {
                                     event.stopPropagation();
@@ -654,7 +667,7 @@ export function App() {
                                 </button>
                                 <button
                                   type="button"
-                                  title="세팅 해제"
+                                  title="?명똿 ?댁젣"
                                   onClick={(event) => {
                                     event.stopPropagation();
                                     void resetSetup(pdf);
@@ -666,7 +679,7 @@ export function App() {
                             ) : null}
                             <button
                               type="button"
-                              title="PDF 삭제"
+                              title="PDF ??젣"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 void deletePdf(pdf);
@@ -679,7 +692,7 @@ export function App() {
                       ) : (
                         <label className="pdfUploadSlot">
                           <Upload size={15} />
-                          PDF 넣기
+                          PDF ?ｊ린
                           <input
                             type="file"
                             accept="application/pdf"
@@ -696,7 +709,7 @@ export function App() {
 
             <div className="sheetCell addRowLabel stickyCol">
               <button className="addSheetButton" type="button" onClick={() => void addPdfRow()}>
-                <Plus size={16} />PDF 행 추가
+                <Plus size={16} />PDF ??異붽?
               </button>
             </div>
             {columns.map((column) => (
@@ -719,20 +732,4 @@ export function App() {
       ) : null}
     </main>
   );
-}
-
-function readImageSize(file: File) {
-  return new Promise<{ width: number; height: number }>((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve({ width: image.naturalWidth || 1, height: image.naturalHeight || 1 });
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("이미지 크기를 읽지 못했습니다."));
-    };
-    image.src = url;
-  });
 }

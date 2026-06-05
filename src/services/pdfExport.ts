@@ -11,15 +11,17 @@ export async function exportPdf(
   imageFiles: Record<string, Blob> = {},
 ) {
   if (!pdf.file) throw new Error("PDF 원본을 불러오지 못했습니다.");
+  console.log("[pdf-download] export.1 read source file");
   const bytes = await pdf.file.arrayBuffer();
+  console.log("[pdf-download] export.2 load pdf document", { sourceBytes: bytes.byteLength });
   const pdfDocument = await PDFDocument.load(bytes);
   pdfDocument.registerFontkit(fontkit);
 
-  const font = fontAsset
-    ? await pdfDocument.embedFont(await fontAsset.file.arrayBuffer())
-    : await embedDefaultFont(pdfDocument);
+  console.log("[pdf-download] export.3 embed font", { hasCustomFont: Boolean(fontAsset) });
+  const font = await embedUsableFont(pdfDocument, fontAsset);
 
   const rowsById = new Map(rows.map((row) => [row.id, row]));
+  console.log("[pdf-download] export.4 draw mapped fields", { areaCount: areas.length });
 
   for (const area of areas) {
     const page = pdfDocument.getPage(area.page - 1);
@@ -65,27 +67,48 @@ export async function exportPdf(
     });
   }
 
+  console.log("[pdf-download] export.5 save pdf document");
   const output = await pdfDocument.save();
   const outputBuffer = new ArrayBuffer(output.byteLength);
   new Uint8Array(outputBuffer).set(output);
   const blob = new Blob([outputBuffer], { type: "application/pdf" });
+  console.log("[pdf-download] export.6 create download url", { outputBytes: output.byteLength });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `${column.name}_${pdf.name.replace(/\.pdf$/i, "")}_filled.pdf`;
+  console.log("[pdf-download] export.7 click download anchor", { fileName: anchor.download });
   anchor.click();
+  console.log("[pdf-download] export.8 revoke download url");
   URL.revokeObjectURL(url);
 }
 
+async function embedUsableFont(pdfDocument: PDFDocument, fontAsset?: FontAsset) {
+  if (fontAsset) {
+    try {
+      const font = await pdfDocument.embedFont(await fontAsset.file.arrayBuffer());
+      font.widthOfTextAtSize("test", 12);
+      return font;
+    } catch (error) {
+      console.error("[pdf-download] custom font failed, fallback to default font", error);
+    }
+  }
+
+  return embedDefaultFont(pdfDocument);
+}
+
 async function embedDefaultFont(pdfDocument: PDFDocument) {
-  const candidates = ["fonts/human-myeongjo.ttf", "fonts/H2MJRE.ttf", "fonts/batang.ttc"];
+  const candidates = ["fonts/human-myeongjo.ttf", "fonts/malgun.ttf"];
 
   for (const path of candidates) {
     try {
       const response = await fetch(`${import.meta.env.BASE_URL}${path}`);
       if (!response.ok) continue;
-      return await pdfDocument.embedFont(await response.arrayBuffer());
-    } catch {
+      const font = await pdfDocument.embedFont(await response.arrayBuffer());
+      font.widthOfTextAtSize("test", 12);
+      return font;
+    } catch (error) {
+      console.error("[pdf-download] default font candidate failed", { path, error });
       continue;
     }
   }

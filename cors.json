@@ -6,7 +6,7 @@
       "https://pwork-9bf30.web.app",
       "https://pwork-9bf30.firebaseapp.com"
     ],
-    "method": ["GET"],
+    "method": ["GET", "HEAD", "POST", "PUT", "DELETE"],
     "maxAgeSeconds": 3600,
     "responseHeader": ["Content-Type", "Content-Disposition"]
   }
