@@ -1368,9 +1368,24 @@ button:disabled {
 }
 
 .mappedArea span {
+  width: 100%;
   overflow: visible;
-  white-space: nowrap;
-  text-overflow: clip;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.areaResizeHandle {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--primary);
+  border-radius: 2px;
+  background: var(--bg-surface);
+  cursor: nwse-resize;
+  z-index: 2;
 }
 
 .mappedArea img {

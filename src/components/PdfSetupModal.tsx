@@ -21,12 +21,18 @@ const AREA_FONT_FAMILY = "LocalBatang, Batang, serif";
 
 type DragState = {
   id: string;
+  /** move=영역/보정 이동, resize=영역 박스 크기 조절(base 모드 전용). */
+  mode: "move" | "resize";
   startClientX: number;
   startClientY: number;
-  /** 드래그 시작 시점의 정규화 기준값(base 모드=area.x/y, adjust 모드=override dx/dy). */
+  /** move: 시작 위치(base=area.x/y, adjust=override dx/dy). resize: 시작 width/height. */
   startX: number;
   startY: number;
 };
+
+/** 리사이즈 최소 크기(정규화). */
+const MIN_AREA_WIDTH = 0.02;
+const MIN_AREA_HEIGHT = 0.01;
 
 type Props = {
   pdfRow: PdfSlotRow;
@@ -203,6 +209,21 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       const dx = (event.clientX - drag.startClientX) / size.width;
       const dy = (event.clientY - drag.startClientY) / size.height;
 
+      if (drag.mode === "resize") {
+        // base 모드 전용: 좌상단 고정, width/height만 조절.
+        setAreas((current) =>
+          current.map((area) => {
+            if (area.id !== drag.id) return area;
+            return {
+              ...area,
+              width: clamp(drag.startX + dx, MIN_AREA_WIDTH, 1 - area.x),
+              height: clamp(drag.startY + dy, MIN_AREA_HEIGHT, 1 - area.y),
+            };
+          }),
+        );
+        return;
+      }
+
       if (isAdjust) {
         setAdjust((current) => ({
           ...current,
@@ -348,11 +369,9 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     };
   }
 
-  const normalizedAreas = useMemo(
-    () => (isAdjust ? areas : areas.map((area) => resizeAreaToText(area))),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [areas, rows, size, isAdjust],
-  );
+  // 박스 크기는 사용자가 직접 조절한 값을 그대로 쓴다(텍스트 폭에 강제로 맞추지 않음).
+  // → 텍스트는 박스 폭에서 줄바꿈, 이미지는 박스 안에 contain 된다.
+  const normalizedAreas = areas;
   const pageAreas = useMemo(() => normalizedAreas.filter((area) => area.page === page), [normalizedAreas, page]);
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
   const selectedRow = rows.find((row) => row.id === selectedRowId);
@@ -397,6 +416,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       const override = adjust.overrides[area.id] ?? { dx: 0, dy: 0 };
       dragRef.current = {
         id: area.id,
+        mode: "move",
         startClientX: event.clientX,
         startClientY: event.clientY,
         startX: override.dx,
@@ -405,6 +425,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     } else {
       dragRef.current = {
         id: area.id,
+        mode: "move",
         startClientX: event.clientX,
         startClientY: event.clientY,
         startX: area.x,
@@ -413,23 +434,26 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     }
   }
 
+  /** base 모드: 영역 박스 크기 조절 시작. */
+  function startResize(event: ReactPointerEvent, area: PdfArea) {
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedAreaId(area.id);
+    dragRef.current = {
+      id: area.id,
+      mode: "resize",
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: area.width,
+      startY: area.height,
+    };
+  }
+
   function updateSelectedArea(patch: Partial<PdfArea>) {
     if (!selectedAreaId) return;
     setAreas((current) =>
-      current.map((area) => (area.id === selectedAreaId ? resizeAreaToText({ ...area, ...patch }) : area)),
+      current.map((area) => (area.id === selectedAreaId ? { ...area, ...patch } : area)),
     );
-  }
-
-  function resizeAreaToText(area: PdfArea) {
-    const width = measureAreaWidth(getAreaValue(area.rowId), area.fontSize, size.width);
-    const height = measureAreaHeight(area.fontSize, size.height);
-    return {
-      ...area,
-      width,
-      height,
-      x: clamp(area.x, 0, 1 - width),
-      y: clamp(area.y, 0, 1 - height),
-    };
   }
 
   function removeArea(id: string) {
@@ -741,6 +765,13 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                           >
                             ×
                           </button>
+                        ) : null}
+                        {!isAdjust && area.id === selectedAreaId ? (
+                          <span
+                            className="areaResizeHandle"
+                            title="크기 조절"
+                            onPointerDown={(event) => startResize(event, area)}
+                          />
                         ) : null}
                       </div>
                     );
