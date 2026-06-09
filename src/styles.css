@@ -1335,9 +1335,9 @@ button:disabled {
   overflow: visible;
 }
 
-/* 이미지 영역: 지정한 박스 크기 안에 contain. */
+/* 이미지 영역: 지정한 박스 크기 안에 contain.
+   overflow는 visible로 둔다(이미지는 contain이라 안 넘치고, hidden이면 박스 밖 리사이즈 핸들이 잘림). */
 .mappedArea.imageArea {
-  overflow: hidden;
   padding: 0;
 }
 

@@ -8,7 +8,7 @@ import { repository } from "../services/storage";
 import { renderFilledPdf } from "../services/pdfExport";
 import { resolveAreaKind } from "../services/pdf/areaKind";
 import { resolveArea } from "../services/pdf/geometry";
-import type { ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
+import type { AreaOverride, ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.mjs",
@@ -211,20 +211,10 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       if (drag.mode === "resize") {
         // 좌상단 고정, width/height만 조절.
         if (isAdjust) {
-          // 이 열에서만 적용되는 크기 덮어쓰기(override.width/height).
-          setAdjust((current) => {
-            const prev = current.overrides[drag.id] ?? {};
-            return {
-              ...current,
-              overrides: {
-                ...current.overrides,
-                [drag.id]: {
-                  ...prev,
-                  width: clamp(drag.startX + dx, MIN_AREA_WIDTH, 1),
-                  height: clamp(drag.startY + dy, MIN_AREA_HEIGHT, 1),
-                },
-              },
-            };
+          // 이 열에서만 적용되는 크기 덮어쓰기(다른 필드는 병합으로 보존).
+          patchOverride(drag.id, {
+            width: clamp(drag.startX + dx, MIN_AREA_WIDTH, 1),
+            height: clamp(drag.startY + dy, MIN_AREA_HEIGHT, 1),
           });
         } else {
           // base 모드: 모든 열이 공유하는 기준 크기.
@@ -244,13 +234,8 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       }
 
       if (isAdjust) {
-        setAdjust((current) => ({
-          ...current,
-          overrides: {
-            ...current.overrides,
-            [drag.id]: { dx: drag.startX + dx, dy: drag.startY + dy },
-          },
-        }));
+        // 위치만 갱신, width/height 등은 병합으로 보존(이동했다고 크기가 초기화되면 안 됨).
+        patchOverride(drag.id, { dx: drag.startX + dx, dy: drag.startY + dy });
       } else {
         setAreas((current) =>
           current.map((area) => {
@@ -481,25 +466,30 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     setSelectedAreaId((current) => (current === id ? "" : current));
   }
 
+  /**
+   * 이 영역의 열별 보정을 "병합"한다(덮어쓰기 아님). 위치·크기 등 다른 필드는 보존된다.
+   * override를 바꾸는 모든 경로(드래그·리사이즈·px 입력)는 이 한 곳을 거쳐
+   * "이동하면 크기가 사라지는" 부류의 버그를 구조적으로 막는다.
+   */
+  function patchOverride(areaId: string, patch: AreaOverride) {
+    setAdjust((current) => ({
+      ...current,
+      overrides: { ...current.overrides, [areaId]: { ...current.overrides[areaId], ...patch } },
+    }));
+  }
+
   function setOverridePx(areaId: string, axis: "dx" | "dy", px: number) {
     const denom = axis === "dx" ? size.width : size.height;
-    setAdjust((current) => {
-      const prev = current.overrides[areaId] ?? { dx: 0, dy: 0 };
-      return { ...current, overrides: { ...current.overrides, [areaId]: { ...prev, [axis]: px / denom } } };
-    });
+    const value = px / denom;
+    patchOverride(areaId, axis === "dx" ? { dx: value } : { dy: value });
   }
 
   /** 이 열에서만 적용되는 박스 크기 덮어쓰기(px 입력). */
   function setOverrideSizePx(areaId: string, axis: "width" | "height", px: number) {
     const denom = axis === "width" ? size.width : size.height;
     const min = axis === "width" ? MIN_AREA_WIDTH : MIN_AREA_HEIGHT;
-    setAdjust((current) => {
-      const prev = current.overrides[areaId] ?? {};
-      return {
-        ...current,
-        overrides: { ...current.overrides, [areaId]: { ...prev, [axis]: clamp(px / denom, min, 1) } },
-      };
-    });
+    const value = clamp(px / denom, min, 1);
+    patchOverride(areaId, axis === "width" ? { width: value } : { height: value });
   }
 
   /** 이 칸의 크기 덮어쓰기만 제거(위치 보정은 유지) → 기준 크기로 복귀. */
@@ -577,31 +567,25 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
 
         <div className="setupLayout">
           <aside className="fieldRail">
-            <div className="railTitle">{isAdjust ? "이 열의 값" : "항목"}</div>
-            <div className="fieldList">
-              {rows.map((row) => (
-                <button
-                  className={row.id === selectedRowId ? "fieldButton active" : "fieldButton"}
-                  key={row.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedRowId(row.id);
-                    if (isAdjust) {
-                      // 항목 블록을 누르면 편집 상태로 들어가 그 항목의 영역을 선택한다.
-                      if (!editing) setEditing(true);
-                      const area = areas.find((entry) => entry.rowId === row.id);
-                      if (area) {
-                        setSelectedAreaId(area.id);
-                        setPage(area.page);
-                      }
-                    }
-                  }}
-                >
-                  <span>{row.label || "항목 없음"}</span>
-                  <strong>{getAreaValue(row.id) || "값 없음"}</strong>
-                </button>
-              ))}
-            </div>
+            {/* 항목 목록은 기준 편집(base)에서만. 미세조정은 캔버스의 박스를 직접 클릭해 잡는다. */}
+            {!isAdjust ? (
+              <>
+                <div className="railTitle">항목</div>
+                <div className="fieldList">
+                  {rows.map((row) => (
+                    <button
+                      className={row.id === selectedRowId ? "fieldButton active" : "fieldButton"}
+                      key={row.id}
+                      type="button"
+                      onClick={() => setSelectedRowId(row.id)}
+                    >
+                      <span>{row.label || "항목 없음"}</span>
+                      <strong>{getAreaValue(row.id) || "값 없음"}</strong>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
 
             {!isAdjust ? (
               <button
@@ -850,7 +834,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
         <footer className="modalFooter">
           <span>
             기준 영역 {normalizedAreas.length}개
-            {selectedRow ? ` · 선택 항목: ${selectedRow.label || "항목 없음"}` : ""}
+            {!isAdjust && selectedRow ? ` · 선택 항목: ${selectedRow.label || "항목 없음"}` : ""}
           </span>
           <div>
             <button className="button secondary" type="button" onClick={onClose}>
