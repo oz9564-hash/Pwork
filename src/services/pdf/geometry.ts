@@ -1,11 +1,37 @@
 import type { ColumnPdfAdjust, PdfArea } from "../../types";
 
-/** 기준 영역에 이 열의 전체 오프셋 + 개별 보정을 더한 정규화 좌표(0~1)를 돌려준다. */
-export function effectiveAreaPosition(area: PdfArea, adjust?: ColumnPdfAdjust) {
+/** 기준 영역 + 열별 보정(위치·크기)을 합친 최종 정규화 영역(0~1). */
+export type ResolvedArea = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+};
+
+/**
+ * 기준 영역에 이 열의 전체 오프셋(dx/dy) + 개별 보정(위치 오프셋 + 크기 덮어쓰기)을
+ * 모두 반영한 최종 영역을 돌려준다. UI와 렌더러가 공유하는 단일 소스.
+ *
+ * 열별 속성(fontSize 등)을 추가할 때도 여기 한 곳만 확장하면 된다.
+ */
+export function resolveArea(area: PdfArea, adjust?: ColumnPdfAdjust): ResolvedArea {
   const override = adjust?.overrides?.[area.id];
   const dx = (adjust?.dx ?? 0) + (override?.dx ?? 0);
   const dy = (adjust?.dy ?? 0) + (override?.dy ?? 0);
-  return { x: area.x + dx, y: area.y + dy };
+  return {
+    x: area.x + dx,
+    y: area.y + dy,
+    width: override?.width ?? area.width,
+    height: override?.height ?? area.height,
+    fontSize: area.fontSize,
+  };
+}
+
+/** 기준 영역에 보정을 더한 정규화 위치(x/y)만 필요한 경우. */
+export function effectiveAreaPosition(area: PdfArea, adjust?: ColumnPdfAdjust) {
+  const { x, y } = resolveArea(area, adjust);
+  return { x, y };
 }
 
 /** pdf-lib 페이지 좌표계(원점=좌하단)의 사각형. */
@@ -26,12 +52,12 @@ export function toPageRect(
   pageWidth: number,
   pageHeight: number,
 ): PageRect {
-  const pos = effectiveAreaPosition(area, adjust);
-  const width = area.width * pageWidth;
-  const height = area.height * pageHeight;
-  const boxTop = pos.y * pageHeight;
+  const resolved = resolveArea(area, adjust);
+  const width = resolved.width * pageWidth;
+  const height = resolved.height * pageHeight;
+  const boxTop = resolved.y * pageHeight;
   return {
-    x: pos.x * pageWidth,
+    x: resolved.x * pageWidth,
     y: pageHeight - boxTop - height,
     width,
     height,

@@ -7,6 +7,7 @@ import { createId } from "../lib/ids";
 import { repository } from "../services/storage";
 import { renderFilledPdf } from "../services/pdfExport";
 import { resolveAreaKind } from "../services/pdf/areaKind";
+import { resolveArea } from "../services/pdf/geometry";
 import type { ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -210,17 +211,37 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       const dy = (event.clientY - drag.startClientY) / size.height;
 
       if (drag.mode === "resize") {
-        // base 모드 전용: 좌상단 고정, width/height만 조절.
-        setAreas((current) =>
-          current.map((area) => {
-            if (area.id !== drag.id) return area;
+        // 좌상단 고정, width/height만 조절.
+        if (isAdjust) {
+          // 이 열에서만 적용되는 크기 덮어쓰기(override.width/height).
+          setAdjust((current) => {
+            const prev = current.overrides[drag.id] ?? {};
             return {
-              ...area,
-              width: clamp(drag.startX + dx, MIN_AREA_WIDTH, 1 - area.x),
-              height: clamp(drag.startY + dy, MIN_AREA_HEIGHT, 1 - area.y),
+              ...current,
+              overrides: {
+                ...current.overrides,
+                [drag.id]: {
+                  ...prev,
+                  width: clamp(drag.startX + dx, MIN_AREA_WIDTH, 1),
+                  height: clamp(drag.startY + dy, MIN_AREA_HEIGHT, 1),
+                },
+              },
             };
-          }),
-        );
+          });
+        } else {
+          // base 모드: 모든 열이 공유하는 기준 크기.
+          setAreas((current) =>
+            current.map((area) =>
+              area.id === drag.id
+                ? {
+                    ...area,
+                    width: clamp(drag.startX + dx, MIN_AREA_WIDTH, 1 - area.x),
+                    height: clamp(drag.startY + dy, MIN_AREA_HEIGHT, 1 - area.y),
+                  }
+                : area,
+            ),
+          );
+        }
         return;
       }
 
@@ -282,10 +303,13 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       if (isAdjust) {
         if (selectedAreaId) {
           setAdjust((current) => {
-            const prev = current.overrides[selectedAreaId] ?? { dx: 0, dy: 0 };
+            const prev = current.overrides[selectedAreaId] ?? {};
             return {
               ...current,
-              overrides: { ...current.overrides, [selectedAreaId]: { dx: prev.dx + ndx, dy: prev.dy + ndy } },
+              overrides: {
+                ...current.overrides,
+                [selectedAreaId]: { ...prev, dx: (prev.dx ?? 0) + ndx, dy: (prev.dy ?? 0) + ndy },
+              },
             };
           });
         } else {
@@ -359,14 +383,13 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     return resolveAreaKind(area, column) === "image";
   }
 
-  /** 기준 영역에 adjust(전체+개별)를 더한 화면 좌표. */
-  function effectivePosition(area: PdfArea) {
-    if (!isAdjust) return { x: area.x, y: area.y };
-    const override = adjust.overrides[area.id];
-    return {
-      x: area.x + adjust.dx + (override?.dx ?? 0),
-      y: area.y + adjust.dy + (override?.dy ?? 0),
-    };
+  /**
+   * 기준 영역 + 보정을 합친 최종 정규화 영역(위치·크기). base 모드는 기준 그대로,
+   * adjust 모드는 이 열의 보정(위치 오프셋 + 크기 덮어쓰기)을 반영한다.
+   * 렌더러(toPageRect)와 동일한 resolveArea를 공유 → 화면 = 출력.
+   */
+  function resolved(area: PdfArea) {
+    return resolveArea(area, isAdjust ? adjust : undefined);
   }
 
   // 박스 크기는 사용자가 직접 조절한 값을 그대로 쓴다(텍스트 폭에 강제로 맞추지 않음).
@@ -413,14 +436,14 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     // 미리보기 상태에서 블록을 누르면 편집 상태로 진입한다.
     if (isAdjust && !editing) setEditing(true);
     if (isAdjust) {
-      const override = adjust.overrides[area.id] ?? { dx: 0, dy: 0 };
+      const override = adjust.overrides[area.id];
       dragRef.current = {
         id: area.id,
         mode: "move",
         startClientX: event.clientX,
         startClientY: event.clientY,
-        startX: override.dx,
-        startY: override.dy,
+        startX: override?.dx ?? 0,
+        startY: override?.dy ?? 0,
       };
     } else {
       dragRef.current = {
@@ -434,18 +457,19 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     }
   }
 
-  /** base 모드: 영역 박스 크기 조절 시작. */
+  /** 영역 박스 크기 조절 시작. base=기준 크기, adjust=이 열의 크기 덮어쓰기. */
   function startResize(event: ReactPointerEvent, area: PdfArea) {
     event.preventDefault();
     event.stopPropagation();
     setSelectedAreaId(area.id);
+    const box = resolved(area);
     dragRef.current = {
       id: area.id,
       mode: "resize",
       startClientX: event.clientX,
       startClientY: event.clientY,
-      startX: area.width,
-      startY: area.height,
+      startX: box.width,
+      startY: box.height,
     };
   }
 
@@ -471,6 +495,29 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     setAdjust((current) => {
       const prev = current.overrides[areaId] ?? { dx: 0, dy: 0 };
       return { ...current, overrides: { ...current.overrides, [areaId]: { ...prev, [axis]: px / denom } } };
+    });
+  }
+
+  /** 이 열에서만 적용되는 박스 크기 덮어쓰기(px 입력). */
+  function setOverrideSizePx(areaId: string, axis: "width" | "height", px: number) {
+    const denom = axis === "width" ? size.width : size.height;
+    const min = axis === "width" ? MIN_AREA_WIDTH : MIN_AREA_HEIGHT;
+    setAdjust((current) => {
+      const prev = current.overrides[areaId] ?? {};
+      return {
+        ...current,
+        overrides: { ...current.overrides, [areaId]: { ...prev, [axis]: clamp(px / denom, min, 1) } },
+      };
+    });
+  }
+
+  /** 이 칸의 크기 덮어쓰기만 제거(위치 보정은 유지) → 기준 크기로 복귀. */
+  function resetOverrideSize(areaId: string) {
+    setAdjust((current) => {
+      const prev = current.overrides[areaId];
+      if (!prev) return current;
+      const { width: _w, height: _h, ...rest } = prev;
+      return { ...current, overrides: { ...current.overrides, [areaId]: rest } };
     });
   }
 
@@ -508,6 +555,14 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
         dy: Math.round((adjust.overrides[selectedAreaId]?.dy ?? 0) * size.height),
       }
     : { dx: 0, dy: 0 };
+
+  // 선택 영역의 현재 박스 크기(px) — adjust 모드는 이 열의 덮어쓰기 반영.
+  const selectedSizePx = selectedArea
+    ? {
+        width: Math.round(resolved(selectedArea).width * size.width),
+        height: Math.round(resolved(selectedArea).height * size.height),
+      }
+    : { width: 0, height: 0 };
 
   return (
     <div className="modalBackdrop" role="dialog" aria-modal="true">
@@ -637,6 +692,29 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         onChange={(event) => setOverridePx(selectedArea.id, "dy", Number(event.target.value))}
                       />
                     </label>
+                    <div className="railTitle">이 칸 크기 (px)</div>
+                    <label>
+                      가로
+                      <input
+                        type="number"
+                        min={1}
+                        value={selectedSizePx.width}
+                        onChange={(event) => setOverrideSizePx(selectedArea.id, "width", Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      세로
+                      <input
+                        type="number"
+                        min={1}
+                        value={selectedSizePx.height}
+                        onChange={(event) => setOverrideSizePx(selectedArea.id, "height", Number(event.target.value))}
+                      />
+                    </label>
+                    <button className="button secondary full" type="button" onClick={() => resetOverrideSize(selectedArea.id)}>
+                      <RotateCcw size={16} />
+                      이 칸 크기 초기화
+                    </button>
                     <button className="button secondary full" type="button" onClick={resetSelectedOverride}>
                       <RotateCcw size={16} />
                       이 칸 보정 초기화
@@ -733,24 +811,35 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                     </div>
                   ) : null}
                   {pageAreas.map((area) => {
-                    const pos = effectivePosition(area);
+                    const box = resolved(area);
+                    const isImg = isImageArea(area);
                     return (
                       <div
-                        className={["mappedArea", area.id === selectedAreaId ? "selected" : ""].filter(Boolean).join(" ")}
+                        className={[
+                          "mappedArea",
+                          isImg ? "imageArea" : "textArea",
+                          area.id === selectedAreaId ? "selected" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
                         key={area.id}
                         style={{
-                          left: pos.x * size.width,
-                          top: pos.y * size.height,
-                          width: area.width * size.width,
-                          height: area.height * size.height,
-                          fontSize: area.fontSize * DISPLAY_SCALE,
+                          left: box.x * size.width,
+                          top: box.y * size.height,
+                          width: box.width * size.width,
+                          // 텍스트: 내용 높이에 맞춰 박스가 늘어나도록 minHeight만(줄바꿈 시 박스가 글을 감쌈).
+                          // 이미지: contain 기준이 되므로 높이 고정.
+                          ...(isImg
+                            ? { height: box.height * size.height }
+                            : { minHeight: box.height * size.height }),
+                          fontSize: box.fontSize * DISPLAY_SCALE,
                         }}
                         onPointerDown={(event) => startDrag(event, area)}
                       >
-                        {isImageArea(area) && imageUrls[area.rowId] ? (
+                        {isImg && imageUrls[area.rowId] ? (
                           <img src={imageUrls[area.rowId]} alt={getAreaValue(area.rowId)} />
                         ) : (
-                          <span>{getAreaValue(area.rowId)}</span>
+                          <span className="areaLabel">{getAreaValue(area.rowId)}</span>
                         )}
                         {!isAdjust ? (
                           <button
@@ -766,7 +855,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                             ×
                           </button>
                         ) : null}
-                        {!isAdjust && area.id === selectedAreaId ? (
+                        {area.id === selectedAreaId ? (
                           <span
                             className="areaResizeHandle"
                             title="크기 조절"

@@ -67,9 +67,24 @@ export type AreaOffset = {
 };
 
 /**
+ * 열별 개별 영역 보정. 기준 영역(PdfArea) 위에 이 열에서만 덧씌운다.
+ * - dx/dy: 위치 오프셋(정규화)
+ * - width/height: 박스 크기 덮어쓰기(정규화). 있으면 기준 크기를 대체한다.
+ *
+ * 모두 선택값이다(없으면 기준값 사용). 향후 열별 fontSize 등도 여기에 추가한다.
+ * 기존 저장 데이터({dx, dy})와 하위호환된다.
+ */
+export type AreaOverride = {
+  dx?: number;
+  dy?: number;
+  width?: number;
+  height?: number;
+};
+
+/**
  * 열별 미세조정. 기준 영역 위에 (열 × PDF행) 단위로 덧씌우는 보정값.
  * - dx/dy: 이 열의 모든 영역을 통째로 미는 전체 오프셋
- * - overrides: 특정 영역(areaId)만 추가로 미는 개별 보정
+ * - overrides: 특정 영역(areaId)만 미는 위치 보정 + 크기 덮어쓰기
  */
 export type ColumnPdfAdjust = {
   id: string;
@@ -77,7 +92,7 @@ export type ColumnPdfAdjust = {
   pdfRowId: string;
   dx: number;
   dy: number;
-  overrides: Record<string, AreaOffset>;
+  overrides: Record<string, AreaOverride>;
   updatedAt: number;
 };
 

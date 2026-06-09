@@ -1311,19 +1311,34 @@ button:disabled {
 
 .mappedArea {
   position: absolute;
+  box-sizing: border-box;
   display: flex;
   align-items: flex-start;
   min-width: 18px;
-  min-height: 12px;
-  border: 2px solid #ef4444;
-  background: rgb(254 242 242 / 0.36);
+  min-height: 14px;
+  border: 1.5px solid rgb(239 68 68 / 0.85);
+  border-radius: 4px;
+  background: rgb(254 242 242 / 0.45);
   color: #991b1b;
-  padding: 1px 3px;
+  padding: 1px 4px;
   font-family: "LocalBatang", Batang, serif;
   font-weight: var(--fw-medium);
-  line-height: 1;
+  /* 렌더러의 LINE_HEIGHT(1.35)와 맞춰 여러 줄이 겹치지 않고 출력과 비슷하게 보이도록. */
+  line-height: 1.35;
   cursor: move;
   user-select: none;
+}
+
+/* 텍스트 영역: 내용에 맞춰 높이가 늘어나며 글을 감싼다(박스 밖으로 흘러나오지 않음). */
+.mappedArea.textArea {
+  height: auto;
+  overflow: visible;
+}
+
+/* 이미지 영역: 지정한 박스 크기 안에 contain. */
+.mappedArea.imageArea {
+  overflow: hidden;
+  padding: 0;
 }
 
 .areaDeleteButton {
@@ -1367,7 +1382,8 @@ button:disabled {
   pointer-events: none;
 }
 
-.mappedArea span {
+/* 내용 텍스트 전용. span 일반 선택자는 리사이즈 핸들 span까지 먹어서 클래스로 좁힌다. */
+.mappedArea .areaLabel {
   width: 100%;
   overflow: visible;
   white-space: pre-wrap;
@@ -1377,15 +1393,20 @@ button:disabled {
 
 .areaResizeHandle {
   position: absolute;
-  right: -6px;
-  bottom: -6px;
-  width: 12px;
-  height: 12px;
-  border: 1px solid var(--primary);
-  border-radius: 2px;
+  right: -7px;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--primary);
+  border-radius: 50%;
   background: var(--bg-surface);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
   cursor: nwse-resize;
-  z-index: 2;
+  z-index: 3;
+}
+
+.areaResizeHandle:hover {
+  background: var(--primary);
 }
 
 .mappedArea img {
