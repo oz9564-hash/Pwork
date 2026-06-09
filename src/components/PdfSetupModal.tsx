@@ -2,42 +2,54 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { ChevronLeft, ChevronRight, Eye, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { createId } from "../lib/ids";
 import { repository } from "../services/storage";
-import type { ColumnPdf, FieldRow, FontAsset, PdfArea, ValueColumn } from "../types";
+import type { ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.mjs",
   import.meta.url,
 ).toString();
 
-/** PDF 원본 대비 화면에 렌더링하는 배율. 캔버스 viewport와 글자 크기 환산에 함께 쓰인다. */
+/** PDF 원본 대비 화면에 렌더링하는 배율. */
 const DISPLAY_SCALE = 1.35;
-/** 새 영역을 추가할 때의 기본 글자 크기(pt). */
 const DEFAULT_FONT_SIZE = 11;
-const DEFAULT_IMAGE_WIDTH = 96;
-/** 영역 너비 측정 시 사용하는 글꼴. 실제 PDF 출력 글꼴과 맞춰야 측정이 정확하다. */
 const AREA_FONT_FAMILY = "LocalBatang, Batang, serif";
 
 type DragState = {
   id: string;
   startClientX: number;
   startClientY: number;
-  startArea: PdfArea;
+  /** 드래그 시작 시점의 정규화 기준값(base 모드=area.x/y, adjust 모드=override dx/dy). */
+  startX: number;
+  startY: number;
 };
 
 type Props = {
-  column: ValueColumn;
-  pdf: ColumnPdf;
+  pdfRow: PdfSlotRow;
   rows: FieldRow[];
   font?: FontAsset;
+  /** 미세조정 대상 열. 있으면 adjust 모드, 없으면 기준(base) 편집 모드. */
+  column?: ValueColumn;
   onClose: () => void;
-  onSaved: (areas: PdfArea[]) => void;
-  onReset: () => void;
+  /** base 모드: 기준 영역 저장 완료 / adjust 모드: 보정 저장 완료 */
+  onSaved: () => void;
 };
 
-export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onReset }: Props) {
+const EMPTY_ADJUST = (columnId: string, pdfRowId: string): ColumnPdfAdjust => ({
+  id: repository.adjustId(columnId, pdfRowId),
+  columnId,
+  pdfRowId,
+  dx: 0,
+  dy: 0,
+  overrides: {},
+  updatedAt: Date.now(),
+});
+
+export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: Props) {
+  const isAdjust = Boolean(column);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -47,11 +59,13 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
   const [pageCount, setPageCount] = useState(1);
   const [size, setSize] = useState({ width: 1, height: 1 });
   const [areas, setAreas] = useState<PdfArea[]>([]);
+  const [adjust, setAdjust] = useState<ColumnPdfAdjust>(() =>
+    EMPTY_ADJUST(column?.id ?? "", pdfRow.id),
+  );
   const [selectedRowId, setSelectedRowId] = useState("");
   const [selectedAreaId, setSelectedAreaId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [previewMode, setPreviewMode] = useState(false);
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
 
@@ -65,15 +79,21 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
       try {
         setLoading(true);
         setError("");
-        const [loadedAreas, file] = await Promise.all([
-          repository.getAreas(pdf.id),
-          repository.getColumnPdfFile(pdf.id),
+        const [loadedAreas, file, loadedAdjusts] = await Promise.all([
+          repository.getAreas(pdfRow.id),
+          repository.getCommonPdfFile(pdfRow.id),
+          isAdjust ? repository.getAllAdjusts() : Promise.resolve([]),
         ]);
         const bytes = await file.arrayBuffer();
         loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
 
         if (!alive) return;
         setAreas(loadedAreas);
+        if (isAdjust && column) {
+          const id = repository.adjustId(column.id, pdfRow.id);
+          const found = loadedAdjusts.find((entry) => entry.id === id);
+          setAdjust(found ?? EMPTY_ADJUST(column.id, pdfRow.id));
+        }
         setPdfDocument(loadedDocument);
         setPageCount(loadedDocument.numPages);
         setSelectedRowId(firstRowId);
@@ -90,11 +110,10 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
       alive = false;
       void loadedDocument?.destroy();
     };
-  }, [pdf.id, firstRowId]);
+  }, [pdfRow.id, firstRowId, isAdjust, column]);
 
   useEffect(() => {
     if (!pdfDocument) return;
-
     let cancelled = false;
 
     async function renderPage() {
@@ -119,6 +138,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
     };
   }, [pdfDocument, page]);
 
+  // 드래그: base 모드는 기준 영역을, adjust 모드는 해당 영역의 개별 보정을 움직인다.
   useEffect(() => {
     function onPointerMove(event: PointerEvent) {
       const drag = dragRef.current;
@@ -127,17 +147,26 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
       const dx = (event.clientX - drag.startClientX) / size.width;
       const dy = (event.clientY - drag.startClientY) / size.height;
 
-      setAreas((current) =>
-        current.map((area) => {
-          if (area.id !== drag.id) return area;
-
-          return {
-            ...area,
-            x: clamp(drag.startArea.x + dx, 0, 1 - drag.startArea.width),
-            y: clamp(drag.startArea.y + dy, 0, 1 - drag.startArea.height),
-          };
-        }),
-      );
+      if (isAdjust) {
+        setAdjust((current) => ({
+          ...current,
+          overrides: {
+            ...current.overrides,
+            [drag.id]: { dx: drag.startX + dx, dy: drag.startY + dy },
+          },
+        }));
+      } else {
+        setAreas((current) =>
+          current.map((area) => {
+            if (area.id !== drag.id) return area;
+            return {
+              ...area,
+              x: clamp(drag.startX + dx, 0, 1 - area.width),
+              y: clamp(drag.startY + dy, 0, 1 - area.height),
+            };
+          }),
+        );
+      }
     }
 
     function onPointerUp() {
@@ -150,17 +179,70 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
     };
-  }, [size]);
+  }, [size, isAdjust]);
 
+  // 방향키 미세 이동. 영역 선택 시 그 영역(base=좌표, adjust=개별보정), 미선택 시 adjust 전체 오프셋.
   useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const deltas: Record<string, [number, number]> = {
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+      };
+      const base = deltas[event.key];
+      if (!base) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      event.preventDefault();
+      const step = event.shiftKey ? 10 : 1;
+      const ndx = (base[0] * step) / size.width;
+      const ndy = (base[1] * step) / size.height;
+
+      if (isAdjust) {
+        if (selectedAreaId) {
+          setAdjust((current) => {
+            const prev = current.overrides[selectedAreaId] ?? { dx: 0, dy: 0 };
+            return {
+              ...current,
+              overrides: { ...current.overrides, [selectedAreaId]: { dx: prev.dx + ndx, dy: prev.dy + ndy } },
+            };
+          });
+        } else {
+          setAdjust((current) => ({ ...current, dx: current.dx + ndx, dy: current.dy + ndy }));
+        }
+      } else if (selectedAreaId) {
+        setAreas((current) =>
+          current.map((area) =>
+            area.id === selectedAreaId
+              ? {
+                  ...area,
+                  x: clamp(area.x + ndx, 0, 1 - area.width),
+                  y: clamp(area.y + ndy, 0, 1 - area.height),
+                }
+              : area,
+          ),
+        );
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [size, isAdjust, selectedAreaId]);
+
+  // adjust 모드: 이 열 셀 이미지 미리보기 URL 로드
+  useEffect(() => {
+    if (!column) return;
     let alive = true;
     const urls: string[] = [];
 
     async function loadImages() {
       const entries = await Promise.all(
-        Object.entries(column.images ?? {}).map(async ([rowId, image]) => {
+        Object.entries(column?.images ?? {}).map(async ([rowId, image]) => {
           try {
-            const file = await repository.getCellImageFile(column.id, rowId, image);
+            const file = await repository.getCellImageFile(column!.id, rowId, image);
             const url = URL.createObjectURL(file);
             urls.push(url);
             return [rowId, url] as const;
@@ -169,7 +251,6 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
           }
         }),
       );
-
       if (alive) setImageUrls(Object.fromEntries(entries.filter((entry) => entry !== undefined)));
     }
 
@@ -178,46 +259,46 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
       alive = false;
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [column.id, column.images]);
+  }, [column]);
+
+  /**
+   * base 모드: 항목 라벨(위치를 잡아야 하므로 비어 있으면 "항목"으로 표시).
+   * adjust 모드: 이 열의 실제 값. 값이 비어 있으면 라벨로 채우지 않고 그대로 빈 값으로 둔다.
+   */
+  function getAreaValue(rowId: string) {
+    if (!column) {
+      const label = rows.find((row) => row.id === rowId)?.label ?? "";
+      return label || "항목";
+    }
+    if (column.images?.[rowId]) return column.images[rowId]?.name ?? "이미지";
+    return column.values[rowId] ?? "";
+  }
+
+  function isImageRow(rowId: string) {
+    return Boolean(column?.images?.[rowId]);
+  }
+
+  /** 기준 영역에 adjust(전체+개별)를 더한 화면 좌표. */
+  function effectivePosition(area: PdfArea) {
+    if (!isAdjust) return { x: area.x, y: area.y };
+    const override = adjust.overrides[area.id];
+    return {
+      x: area.x + adjust.dx + (override?.dx ?? 0),
+      y: area.y + adjust.dy + (override?.dy ?? 0),
+    };
+  }
 
   const normalizedAreas = useMemo(
-    () => areas.map((area) => resizeAreaToText(area)),
-    [areas, column.values, rows, size],
+    () => (isAdjust ? areas : areas.map((area) => resizeAreaToText(area))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [areas, rows, size, isAdjust],
   );
   const pageAreas = useMemo(() => normalizedAreas.filter((area) => area.page === page), [normalizedAreas, page]);
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
   const selectedRow = rows.find((row) => row.id === selectedRowId);
-  const selectedValue = getAreaValue(selectedRowId);
-
-  function isImageRow(rowId: string) {
-    return Boolean(column.images?.[rowId]);
-  }
-
-  /** 항목에 입력된 값을 우선 쓰고, 없으면 항목 라벨로 폴백한다. (측정·배치 미리보기용) */
-  function getAreaValue(rowId: string) {
-    if (isImageRow(rowId)) return rows.find((row) => row.id === rowId)?.label || "이미지";
-    return column.values[rowId] || rows.find((row) => row.id === rowId)?.label || "";
-  }
-
-  /** 화면 표시용 원본 값. 값이 없으면 빈 문자열을 그대로 둔다. */
-  function getDisplayValue(rowId: string) {
-    if (isImageRow(rowId)) return column.images?.[rowId]?.name ?? "이미지";
-    return column.values[rowId] ?? "";
-  }
-
-  /** 화면 표시용 항목 라벨. 없으면 "항목"으로 폴백한다. */
-  function getDisplayLabel(rowId: string) {
-    return rows.find((row) => row.id === rowId)?.label ?? "항목";
-  }
-
-  function handleHoverMove(event: ReactMouseEvent<HTMLDivElement>) {
-    if (!selectedRowId) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
-  }
 
   function addAreaAt(clientX?: number, clientY?: number) {
-    if (previewMode) return;
+    if (isAdjust) return; // adjust 모드에서는 영역을 추가하지 않는다.
     if (!selectedRowId) return;
 
     const overlay = overlayRef.current;
@@ -230,7 +311,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
 
     const area: PdfArea = {
       id: createId("area"),
-      columnPdfId: pdf.id,
+      pdfRowId: pdfRow.id,
       rowId: selectedRowId,
       page,
       x: clamp(x, 0, 1 - width),
@@ -248,34 +329,36 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
     event.preventDefault();
     event.stopPropagation();
     setSelectedAreaId(area.id);
-    dragRef.current = {
-      id: area.id,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startArea: area,
-    };
+    if (isAdjust) {
+      const override = adjust.overrides[area.id] ?? { dx: 0, dy: 0 };
+      dragRef.current = {
+        id: area.id,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: override.dx,
+        startY: override.dy,
+      };
+    } else {
+      dragRef.current = {
+        id: area.id,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: area.x,
+        startY: area.y,
+      };
+    }
   }
 
   function updateSelectedArea(patch: Partial<PdfArea>) {
     if (!selectedAreaId) return;
     setAreas((current) =>
-      current.map((area) => {
-        if (area.id !== selectedAreaId) return area;
-        const next = { ...area, ...patch };
-        return resizeAreaToText(next);
-      }),
+      current.map((area) => (area.id === selectedAreaId ? resizeAreaToText({ ...area, ...patch }) : area)),
     );
   }
 
   function resizeAreaToText(area: PdfArea) {
-    const image = column.images?.[area.rowId];
-    const width = image
-      ? measureImageAreaWidth(area.fontSize, size.width)
-      : measureAreaWidth(getAreaValue(area.rowId), area.fontSize, size.width);
-    const height = image
-      ? measureImageAreaHeight(image.width, image.height, width, size.width, size.height)
-      : measureAreaHeight(area.fontSize, size.height);
-
+    const width = measureAreaWidth(getAreaValue(area.rowId), area.fontSize, size.width);
+    const height = measureAreaHeight(area.fontSize, size.height);
     return {
       ...area,
       width,
@@ -290,15 +373,53 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
     setSelectedAreaId((current) => (current === id ? "" : current));
   }
 
+  function setGlobalOffsetPx(axis: "dx" | "dy", px: number) {
+    const denom = axis === "dx" ? size.width : size.height;
+    setAdjust((current) => ({ ...current, [axis]: px / denom }));
+  }
+
+  function setOverridePx(areaId: string, axis: "dx" | "dy", px: number) {
+    const denom = axis === "dx" ? size.width : size.height;
+    setAdjust((current) => {
+      const prev = current.overrides[areaId] ?? { dx: 0, dy: 0 };
+      return { ...current, overrides: { ...current.overrides, [areaId]: { ...prev, [axis]: px / denom } } };
+    });
+  }
+
+  function resetAllAdjust() {
+    setAdjust((current) => ({ ...current, dx: 0, dy: 0, overrides: {} }));
+  }
+
+  function resetSelectedOverride() {
+    if (!selectedAreaId) return;
+    setAdjust((current) => {
+      const { [selectedAreaId]: _removed, ...overrides } = current.overrides;
+      return { ...current, overrides };
+    });
+  }
+
   async function save() {
-    await repository.replaceAreas(pdf.id, normalizedAreas);
-    onSaved(normalizedAreas);
+    if (isAdjust && column) {
+      await repository.saveAdjust({ ...adjust, updatedAt: Date.now() });
+    } else {
+      await repository.replaceAreas(pdfRow.id, normalizedAreas);
+    }
+    onSaved();
     onClose();
   }
 
-  function togglePreview() {
-    setPreviewMode((current) => !current);
+  function handleHoverMove(event: ReactMouseEvent<HTMLDivElement>) {
+    if (isAdjust || !selectedRowId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setHoverPoint({ x: event.clientX - rect.left, y: event.clientY - rect.top });
   }
+
+  const selectedOverridePx = selectedAreaId
+    ? {
+        dx: Math.round((adjust.overrides[selectedAreaId]?.dx ?? 0) * size.width),
+        dy: Math.round((adjust.overrides[selectedAreaId]?.dy ?? 0) * size.height),
+      }
+    : { dx: 0, dy: 0 };
 
   return (
     <div className="modalBackdrop" role="dialog" aria-modal="true">
@@ -306,9 +427,13 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
         <header className="modalHeader">
           <div>
             <h2>
-              {column.name} / {pdf.name}
+              {isAdjust ? `${column?.name} 미세조정` : "기준 영역 편집"} / {pdfRow.pdf?.name ?? pdfRow.label}
             </h2>
-            <p>왼쪽 항목을 선택한 뒤 PDF 위를 클릭하면 이 열 전용 영역이 추가됩니다.</p>
+            <p>
+              {isAdjust
+                ? "영역을 드래그하거나 방향키로 살짝 밀어 이 열만 맞춥니다. (Shift+방향키 10px, 미선택 시 전체 이동)"
+                : "왼쪽 항목을 선택한 뒤 PDF 위를 클릭하면 기준 영역이 추가됩니다. 모든 열이 이 위치를 공유합니다."}
+            </p>
           </div>
           <button className="iconButton" type="button" onClick={onClose} title="닫기">
             <X size={20} />
@@ -317,7 +442,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
 
         <div className="setupLayout">
           <aside className="fieldRail">
-            <div className="railTitle">이 열의 값</div>
+            <div className="railTitle">{isAdjust ? "이 열의 값" : "항목"}</div>
             <div className="fieldList">
               {rows.map((row) => (
                 <button
@@ -327,59 +452,106 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
                   onClick={() => setSelectedRowId(row.id)}
                 >
                   <span>{row.label || "항목 없음"}</span>
-                  <strong>{column.images?.[row.id] ? "이미지" : column.values[row.id] || "값 없음"}</strong>
+                  <strong>{getAreaValue(row.id) || "값 없음"}</strong>
                 </button>
               ))}
             </div>
-            <button
-              className="button primary full"
-              type="button"
-              disabled={!selectedRowId || previewMode}
-              onClick={() => addAreaAt()}
-            >
-              <Plus size={16} />
-              영역 추가
-            </button>
+
+            {!isAdjust ? (
+              <button
+                className="button primary full"
+                type="button"
+                disabled={!selectedRowId}
+                onClick={() => addAreaAt()}
+              >
+                <Plus size={16} />
+                영역 추가
+              </button>
+            ) : null}
+
+            {isAdjust ? (
+              <div className="areaEditor">
+                <div className="railTitle">전체 이동 (px)</div>
+                <label>
+                  좌우(dx)
+                  <input
+                    type="number"
+                    value={Math.round(adjust.dx * size.width)}
+                    onChange={(event) => setGlobalOffsetPx("dx", Number(event.target.value))}
+                  />
+                </label>
+                <label>
+                  상하(dy)
+                  <input
+                    type="number"
+                    value={Math.round(adjust.dy * size.height)}
+                    onChange={(event) => setGlobalOffsetPx("dy", Number(event.target.value))}
+                  />
+                </label>
+                <button className="button secondary full" type="button" onClick={resetAllAdjust}>
+                  <RotateCcw size={16} />
+                  전체 보정 초기화
+                </button>
+              </div>
+            ) : null}
 
             <div className="areaEditor">
               <div className="railTitle">선택 영역</div>
               {selectedArea ? (
-                <>
-                  <label>
-                    연결 항목
-                    <select
-                      value={selectedArea.rowId}
-                      disabled={previewMode}
-                      onChange={(event) => updateSelectedArea({ rowId: event.target.value })}
-                    >
-                      {rows.map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.label || "항목 없음"}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    크기
-                    <input
-                      type="number"
-                      min={6}
-                      max={48}
-                      value={selectedArea.fontSize}
-                      disabled={previewMode}
-                      onChange={(event) => updateSelectedArea({ fontSize: Number(event.target.value) })}
-                    />
-                  </label>
-                  <button
-                    className="button danger full"
-                    type="button"
-                    disabled={previewMode}
-                    onClick={() => removeArea(selectedAreaId)}
-                  >
-                    <Trash2 size={16} />
-                    영역 삭제
-                  </button>
-                </>
+                isAdjust ? (
+                  <>
+                    <label>
+                      좌우 보정(px)
+                      <input
+                        type="number"
+                        value={selectedOverridePx.dx}
+                        onChange={(event) => setOverridePx(selectedArea.id, "dx", Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      상하 보정(px)
+                      <input
+                        type="number"
+                        value={selectedOverridePx.dy}
+                        onChange={(event) => setOverridePx(selectedArea.id, "dy", Number(event.target.value))}
+                      />
+                    </label>
+                    <button className="button secondary full" type="button" onClick={resetSelectedOverride}>
+                      <RotateCcw size={16} />
+                      이 칸 보정 초기화
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <label>
+                      연결 항목
+                      <select
+                        value={selectedArea.rowId}
+                        onChange={(event) => updateSelectedArea({ rowId: event.target.value })}
+                      >
+                        {rows.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {row.label || "항목 없음"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      크기
+                      <input
+                        type="number"
+                        min={6}
+                        max={48}
+                        value={selectedArea.fontSize}
+                        onChange={(event) => updateSelectedArea({ fontSize: Number(event.target.value) })}
+                      />
+                    </label>
+                    <button className="button danger full" type="button" onClick={() => removeArea(selectedAreaId)}>
+                      <Trash2 size={16} />
+                      영역 삭제
+                    </button>
+                  </>
+                )
               ) : (
                 <p>PDF 위 영역을 선택하세요.</p>
               )}
@@ -416,26 +588,64 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
               {error ? <div className="loading">{error}</div> : null}
               <div className="pdfCanvasBox" style={{ width: size.width, height: size.height }}>
                 <canvas ref={canvasRef} />
-                {previewMode ? (
-                  <PreviewAreaLayer areas={pageAreas} size={size} imageUrls={imageUrls} getValue={getDisplayValue} />
-                ) : (
-                  <EditAreaLayer
-                    overlayRef={overlayRef}
-                    areas={pageAreas}
-                    size={size}
-                    selectedAreaId={selectedAreaId}
-                    hoverPoint={hoverPoint}
-                    placementValue={selectedValue}
-                    imageUrls={imageUrls}
-                    onHoverMove={handleHoverMove}
-                    onHoverLeave={() => setHoverPoint(null)}
-                    onAddAt={addAreaAt}
-                    onStartDrag={startDrag}
-                    onRemoveArea={removeArea}
-                    getValue={getDisplayValue}
-                    getLabel={getDisplayLabel}
-                  />
-                )}
+                <div
+                  className="areaOverlay"
+                  ref={overlayRef}
+                  onMouseMove={handleHoverMove}
+                  onMouseLeave={() => setHoverPoint(null)}
+                  onClick={(event) => {
+                    if (event.target === event.currentTarget) {
+                      if (isAdjust) setSelectedAreaId("");
+                      else addAreaAt(event.clientX, event.clientY);
+                    }
+                  }}
+                >
+                  {!isAdjust && hoverPoint && selectedRowId ? (
+                    <div
+                      className="placementPreview"
+                      style={{ left: hoverPoint.x, top: hoverPoint.y, fontSize: DEFAULT_FONT_SIZE * DISPLAY_SCALE }}
+                    >
+                      {getAreaValue(selectedRowId)}
+                    </div>
+                  ) : null}
+                  {pageAreas.map((area) => {
+                    const pos = effectivePosition(area);
+                    return (
+                      <div
+                        className={["mappedArea", area.id === selectedAreaId ? "selected" : ""].filter(Boolean).join(" ")}
+                        key={area.id}
+                        style={{
+                          left: pos.x * size.width,
+                          top: pos.y * size.height,
+                          width: area.width * size.width,
+                          height: area.height * size.height,
+                          fontSize: area.fontSize * DISPLAY_SCALE,
+                        }}
+                        onPointerDown={(event) => startDrag(event, area)}
+                      >
+                        {isImageRow(area.rowId) && imageUrls[area.rowId] ? (
+                          <img src={imageUrls[area.rowId]} alt={getAreaValue(area.rowId)} />
+                        ) : (
+                          <span>{getAreaValue(area.rowId)}</span>
+                        )}
+                        {!isAdjust ? (
+                          <button
+                            type="button"
+                            className="areaDeleteButton"
+                            title="영역 삭제"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              removeArea(area.id);
+                            }}
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -443,151 +653,25 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
 
         <footer className="modalFooter">
           <span>
-            현재 영역 {normalizedAreas.length}개
+            기준 영역 {normalizedAreas.length}개
             {selectedRow ? ` · 선택 항목: ${selectedRow.label || "항목 없음"}` : ""}
           </span>
           <div>
-            <button className="button danger" type="button" onClick={onReset}>
-              <RotateCcw size={16} />
-              세팅 해제
-            </button>
-            <button className="button secondary" type="button" disabled={normalizedAreas.length === 0} onClick={togglePreview}>
-              <Eye size={16} />
-              {previewMode ? "편집 보기" : "미리보기"}
-            </button>
             <button className="button secondary" type="button" onClick={onClose}>
               닫기
             </button>
-            <button className="button primary" type="button" disabled={normalizedAreas.length === 0} onClick={() => void save()}>
+            <button
+              className="button primary"
+              type="button"
+              disabled={!isAdjust && normalizedAreas.length === 0}
+              onClick={() => void save()}
+            >
               <Save size={16} />
-              저장 후 세팅 완료
+              {isAdjust ? "보정 저장" : "기준 저장"}
             </button>
           </div>
         </footer>
       </section>
-    </div>
-  );
-}
-
-type Size = { width: number; height: number };
-
-/** 정규화된 영역(0~1)을 현재 캔버스 픽셀 좌표/크기로 환산한 인라인 스타일. */
-function areaStyle(area: PdfArea, size: Size) {
-  return {
-    left: area.x * size.width,
-    top: area.y * size.height,
-    width: area.width * size.width,
-    height: area.height * size.height,
-    fontSize: area.fontSize * DISPLAY_SCALE,
-  };
-}
-
-type PreviewAreaLayerProps = {
-  areas: PdfArea[];
-  size: Size;
-  imageUrls: Record<string, string>;
-  getValue: (rowId: string) => string;
-};
-
-/** 미리보기 모드: 상호작용 없이 각 영역의 값만 그대로 표시한다. */
-function PreviewAreaLayer({ areas, size, imageUrls, getValue }: PreviewAreaLayerProps) {
-  return (
-    <div className="areaOverlay previewing">
-      {areas.map((area) => (
-        <div className="mappedArea preview" key={area.id} style={areaStyle(area, size)}>
-          {imageUrls[area.rowId] ? (
-            <img src={imageUrls[area.rowId]} alt={getValue(area.rowId)} />
-          ) : (
-            <span>{getValue(area.rowId)}</span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-type EditAreaLayerProps = {
-  overlayRef: RefObject<HTMLDivElement | null>;
-  areas: PdfArea[];
-  size: Size;
-  selectedAreaId: string;
-  hoverPoint: { x: number; y: number } | null;
-  placementValue: string;
-  imageUrls: Record<string, string>;
-  onHoverMove: (event: ReactMouseEvent<HTMLDivElement>) => void;
-  onHoverLeave: () => void;
-  onAddAt: (clientX: number, clientY: number) => void;
-  onStartDrag: (event: ReactPointerEvent, area: PdfArea) => void;
-  onRemoveArea: (id: string) => void;
-  getValue: (rowId: string) => string;
-  getLabel: (rowId: string) => string;
-};
-
-/** 편집 모드: 클릭으로 영역 추가, 드래그 이동, 호버 배치 미리보기, 개별 삭제를 처리한다. */
-function EditAreaLayer({
-  overlayRef,
-  areas,
-  size,
-  selectedAreaId,
-  hoverPoint,
-  placementValue,
-  imageUrls,
-  onHoverMove,
-  onHoverLeave,
-  onAddAt,
-  onStartDrag,
-  onRemoveArea,
-  getValue,
-  getLabel,
-}: EditAreaLayerProps) {
-  return (
-    <div
-      className="areaOverlay"
-      ref={overlayRef}
-      onMouseMove={onHoverMove}
-      onMouseLeave={onHoverLeave}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onAddAt(event.clientX, event.clientY);
-      }}
-    >
-      {hoverPoint && placementValue ? (
-        <div
-          className="placementPreview"
-          style={{
-            left: hoverPoint.x,
-            top: hoverPoint.y,
-            fontSize: DEFAULT_FONT_SIZE * DISPLAY_SCALE,
-          }}
-        >
-          {placementValue}
-        </div>
-      ) : null}
-      {areas.map((area) => (
-        <div
-          className={["mappedArea", area.id === selectedAreaId ? "selected" : ""].filter(Boolean).join(" ")}
-          key={area.id}
-          style={areaStyle(area, size)}
-          onPointerDown={(event) => onStartDrag(event, area)}
-        >
-          {imageUrls[area.rowId] ? (
-            <img src={imageUrls[area.rowId]} alt={getValue(area.rowId) || getLabel(area.rowId)} />
-          ) : (
-            <span>{getValue(area.rowId) || getLabel(area.rowId)}</span>
-          )}
-          <button
-            type="button"
-            className="areaDeleteButton"
-            title="영역 삭제"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onRemoveArea(area.id);
-            }}
-          >
-            ×
-          </button>
-        </div>
-      ))}
     </div>
   );
 }
@@ -600,7 +684,7 @@ function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
   const displayFontSize = fontSize * DISPLAY_SCALE;
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
-  context!.font = `${displayFontSize}px ${AREA_FONT_FAMILY}`;
+  if (context) context.font = `${displayFontSize}px ${AREA_FONT_FAMILY}`;
   const measuredWidth = context?.measureText(text).width ?? text.length * displayFontSize;
   const pixelWidth = Math.max(18, measuredWidth + 14);
   return clamp(pixelWidth / pageWidth, 0.02, 0.9);
@@ -608,20 +692,4 @@ function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
 
 function measureAreaHeight(fontSize: number, pageHeight: number) {
   return clamp((fontSize * 1.55) / pageHeight, 0.001, 0.12);
-}
-
-function measureImageAreaWidth(fontSize: number, pageWidth: number) {
-  const scaledWidth = DEFAULT_IMAGE_WIDTH * (fontSize / DEFAULT_FONT_SIZE);
-  return clamp(scaledWidth / pageWidth, 0.02, 0.9);
-}
-
-function measureImageAreaHeight(
-  imageWidth: number,
-  imageHeight: number,
-  normalizedWidth: number,
-  pageWidth: number,
-  pageHeight: number,
-) {
-  const ratio = imageHeight / Math.max(imageWidth, 1);
-  return clamp((normalizedWidth * pageWidth * ratio) / pageHeight, 0.001, 0.9);
 }

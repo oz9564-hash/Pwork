@@ -1,27 +1,46 @@
 import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
-import type { ColumnPdf, FieldRow, FontAsset, PdfArea, ValueColumn } from "../types";
+import type { ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, ValueColumn } from "../types";
 
-export async function exportPdf(
-  pdf: ColumnPdf,
-  rows: FieldRow[],
-  column: ValueColumn,
-  areas: PdfArea[],
-  fontAsset?: FontAsset,
-  imageFiles: Record<string, Blob> = {},
-) {
-  if (!pdf.file) throw new Error("PDF 원본을 불러오지 못했습니다.");
-  console.log("[pdf-download] export.1 read source file");
-  const bytes = await pdf.file.arrayBuffer();
-  console.log("[pdf-download] export.2 load pdf document", { sourceBytes: bytes.byteLength });
+export type ExportPdfParams = {
+  /** 공통 PDF 원본. */
+  file: Blob;
+  /** 다운로드 파일명에 쓰는 공통 PDF 이름. */
+  fileName: string;
+  rows: FieldRow[];
+  column: ValueColumn;
+  /** 기준 영역(레이아웃 원본). */
+  areas: PdfArea[];
+  /** 이 열의 미세조정 보정. 없으면 기준 그대로. */
+  adjust?: ColumnPdfAdjust;
+  fontAsset?: FontAsset;
+  imageFiles?: Record<string, Blob>;
+};
+
+/** 기준 영역에 이 열의 전체 오프셋 + 개별 보정을 더한 정규화 좌표를 돌려준다. */
+export function effectiveAreaPosition(area: PdfArea, adjust?: ColumnPdfAdjust) {
+  const override = adjust?.overrides?.[area.id];
+  const dx = (adjust?.dx ?? 0) + (override?.dx ?? 0);
+  const dy = (adjust?.dy ?? 0) + (override?.dy ?? 0);
+  return { x: area.x + dx, y: area.y + dy };
+}
+
+export async function exportPdf({
+  file,
+  fileName,
+  rows,
+  column,
+  areas,
+  adjust,
+  fontAsset,
+  imageFiles = {},
+}: ExportPdfParams) {
+  const bytes = await file.arrayBuffer();
   const pdfDocument = await PDFDocument.load(bytes);
   pdfDocument.registerFontkit(fontkit);
 
-  console.log("[pdf-download] export.3 embed font", { hasCustomFont: Boolean(fontAsset) });
   const font = await embedUsableFont(pdfDocument, fontAsset);
-
   const rowsById = new Map(rows.map((row) => [row.id, row]));
-  console.log("[pdf-download] export.4 draw mapped fields", { areaCount: areas.length });
 
   for (const area of areas) {
     const page = pdfDocument.getPage(area.page - 1);
@@ -31,8 +50,9 @@ export async function exportPdf(
     if (!row) continue;
 
     const { width: pageWidth, height: pageHeight } = page.getSize();
-    const x = area.x * pageWidth;
-    const boxTop = area.y * pageHeight;
+    const pos = effectiveAreaPosition(area, adjust);
+    const x = pos.x * pageWidth;
+    const boxTop = pos.y * pageHeight;
     const boxHeight = area.height * pageHeight;
     const imageFile = imageFiles[row.id];
 
@@ -55,8 +75,7 @@ export async function exportPdf(
     const text = column.values[row.id] ?? "";
     if (!text) continue;
 
-    // 영역 너비는 세팅 당시 값 기준으로 저장된다. 이후 더 긴 값이 들어오면
-    // 줄바꿈으로 박스를 벗어나므로, 한 줄에 맞도록 글자 크기를 줄여서 그린다.
+    // 영역 너비를 넘으면 한 줄에 맞도록 글자 크기를 줄여서 그린다.
     const maxWidth = area.width * pageWidth;
     let size = area.fontSize;
     const measured = font.widthOfTextAtSize(text, size);
@@ -74,19 +93,15 @@ export async function exportPdf(
     });
   }
 
-  console.log("[pdf-download] export.5 save pdf document");
   const output = await pdfDocument.save();
   const outputBuffer = new ArrayBuffer(output.byteLength);
   new Uint8Array(outputBuffer).set(output);
   const blob = new Blob([outputBuffer], { type: "application/pdf" });
-  console.log("[pdf-download] export.6 create download url", { outputBytes: output.byteLength });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${column.name}_${pdf.name.replace(/\.pdf$/i, "")}_filled.pdf`;
-  console.log("[pdf-download] export.7 click download anchor", { fileName: anchor.download });
+  anchor.download = `${column.name}_${fileName.replace(/\.pdf$/i, "")}_filled.pdf`;
   anchor.click();
-  console.log("[pdf-download] export.8 revoke download url");
   URL.revokeObjectURL(url);
 }
 

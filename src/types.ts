@@ -22,27 +22,27 @@ export type CellImageAsset = {
   updatedAt: number;
 };
 
+/** PDF 행에 한 장 붙는 공통 PDF의 메타데이터. 실제 파일은 Storage(pdfs/{pdfRowId})에 저장된다. */
+export type CommonPdf = {
+  name: string;
+  updatedAt: number;
+};
+
 export type PdfSlotRow = {
   id: string;
   label: string;
   createdAt: number;
+  /** 이 행의 공통 PDF. 없으면 아직 업로드 전. */
+  pdf?: CommonPdf;
 };
 
-export type ColumnPdf = {
-  id: string;
-  columnId: string;
-  pdfRowId: string;
-  name: string;
-  /** 업로드/복사 시에만 채워지는 PDF 원본. 평소 메모리에는 메타데이터만 두고 필요할 때 Storage에서 내려받는다. */
-  file?: Blob;
-  status: "draft" | "ready";
-  createdAt: number;
-  updatedAt: number;
-};
-
+/**
+ * 기준 영역. "어떤 항목(rowId)을 PDF 어디에(x/y/크기/페이지) 찍을지"의 원본 레이아웃.
+ * PDF 행(공통 PDF)에 1벌만 존재하며 모든 값 열이 공유한다.
+ */
 export type PdfArea = {
   id: string;
-  columnPdfId: string;
+  pdfRowId: string;
   rowId: string;
   page: number;
   x: number;
@@ -50,6 +50,27 @@ export type PdfArea = {
   width: number;
   height: number;
   fontSize: number;
+};
+
+/** 정규화(0~1, 페이지 비율) 좌표 오프셋. */
+export type AreaOffset = {
+  dx: number;
+  dy: number;
+};
+
+/**
+ * 열별 미세조정. 기준 영역 위에 (열 × PDF행) 단위로 덧씌우는 보정값.
+ * - dx/dy: 이 열의 모든 영역을 통째로 미는 전체 오프셋
+ * - overrides: 특정 영역(areaId)만 추가로 미는 개별 보정
+ */
+export type ColumnPdfAdjust = {
+  id: string;
+  columnId: string;
+  pdfRowId: string;
+  dx: number;
+  dy: number;
+  overrides: Record<string, AreaOffset>;
+  updatedAt: number;
 };
 
 export type FontAsset = {

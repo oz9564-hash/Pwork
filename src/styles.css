@@ -982,6 +982,109 @@ button:disabled {
 }
 
 /* =========================================================================
+   Common PDF row (left cell) + per-column adjust/download (right cells)
+   ========================================================================= */
+.pdfRowLabel {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: calc(6px * var(--sheet-zoom));
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.pdfRowLabelTop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.pdfRowCommon {
+  display: flex;
+  flex-direction: column;
+  gap: calc(5px * var(--sheet-zoom));
+  width: 100%;
+}
+
+.pdfRowFileName {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: var(--sheet-small-font-size);
+  font-weight: var(--fw-semibold);
+}
+
+.pdfRowFileName svg {
+  flex: 0 0 auto;
+}
+
+.pdfRowCommonActions {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.pdfRowCommonActions button,
+.pdfReplaceButton,
+.pdfColumnActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 1;
+  min-height: var(--sheet-control-height);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--sheet-small-font-size);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.pdfReplaceButton {
+  position: relative;
+}
+
+.pdfReplaceButton input {
+  display: none;
+}
+
+.pdfRowCommonActions button:hover,
+.pdfReplaceButton:hover,
+.pdfColumnActions button:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-muted);
+  color: var(--text);
+}
+
+.pdfColumnActions {
+  display: flex;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.pdfColumnActions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pdfSlotHint {
+  width: 100%;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--sheet-small-font-size);
+  line-height: 1.3;
+}
+
+/* =========================================================================
    Modal
    ========================================================================= */
 .modalBackdrop {

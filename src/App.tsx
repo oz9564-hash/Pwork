@@ -9,6 +9,8 @@ import {
   LogOut,
   Plus,
   GripVertical,
+  Pencil,
+  SlidersHorizontal,
   Trash2,
   Upload,
   X,
@@ -21,11 +23,12 @@ import { optimizeImageFile } from "./lib/imageOptimize";
 import { exportPdf } from "./services/pdfExport";
 import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
 import { repository } from "./services/storage";
-import type { ColumnPdf, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "./types";
+import type { ColumnPdfAdjust, CommonPdf, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "./types";
 
+/** 기준 편집(column 없음) 또는 열 미세조정(column 있음) 모달 대상. */
 type ActiveSetup = {
-  column: ValueColumn;
-  pdf: ColumnPdf;
+  pdfRow: PdfSlotRow;
+  column?: ValueColumn;
 };
 
 type BusyFeedback = {
@@ -80,7 +83,9 @@ export function App() {
   const [columns, setColumns] = useState<ValueColumn[]>([]);
   const [pdfRows, setPdfRows] = useState<PdfSlotRow[]>([]);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
-  const [pdfs, setPdfs] = useState<ColumnPdf[]>([]);
+  // 기준 영역(모든 열 공유) + 열별 보정. PDF 파일은 PDF 행에 1장씩(pdfRow.pdf).
+  const [baseAreas, setBaseAreas] = useState<PdfArea[]>([]);
+  const [adjusts, setAdjusts] = useState<ColumnPdfAdjust[]>([]);
   const [font, setFont] = useState<FontAsset>();
   const [activeSetup, setActiveSetup] = useState<ActiveSetup>();
   const [busyId, setBusyId] = useState<string>();
@@ -164,7 +169,8 @@ export function App() {
     setRows([]);
     setColumns([]);
     setPdfRows([]);
-    setPdfs([]);
+    setBaseAreas([]);
+    setAdjusts([]);
     setFont(undefined);
     setSheetSelection(undefined);
   }, [user]);
@@ -226,20 +232,41 @@ export function App() {
   }, []);
 
   async function load() {
-    const [storedRows, storedColumns, storedPdfRows, storedPdfs, storedFont] = await Promise.all([
+    const [storedRows, storedColumns, storedPdfRows, storedAreas, storedAdjusts, storedFont] = await Promise.all([
       repository.getRows(),
       repository.getColumns(),
       repository.getPdfRows(),
-      repository.getAllColumnPdfs(),
+      repository.getAllAreas(),
+      repository.getAllAdjusts(),
       repository.getFont(),
     ]);
 
     setRows(storedRows.sort((a, b) => a.createdAt - b.createdAt));
     setColumns(storedColumns.sort((a, b) => a.createdAt - b.createdAt));
     setPdfRows(storedPdfRows.sort((a, b) => a.createdAt - b.createdAt));
-    setPdfs(storedPdfs.sort((a, b) => a.createdAt - b.createdAt));
+    setBaseAreas(storedAreas);
+    setAdjusts(storedAdjusts);
     setFont(storedFont);
     setSheetSelection(undefined);
+  }
+
+  /** 기준 영역/보정을 다시 불러온다. 세팅·미세조정 모달 저장 후 호출. */
+  async function reloadPdfData() {
+    const [storedAreas, storedAdjusts] = await Promise.all([
+      repository.getAllAreas(),
+      repository.getAllAdjusts(),
+    ]);
+    setBaseAreas(storedAreas);
+    setAdjusts(storedAdjusts);
+  }
+
+  function areasForPdfRow(pdfRowId: string) {
+    return baseAreas.filter((area) => area.pdfRowId === pdfRowId);
+  }
+
+  function findAdjust(columnId: string, pdfRowId: string) {
+    const id = repository.adjustId(columnId, pdfRowId);
+    return adjusts.find((adjust) => adjust.id === id);
   }
 
   async function createStarterSheet() {
@@ -303,7 +330,8 @@ export function App() {
     pdfRowSaver.cancel(pdfRowId);
     if (!(await persist(() => repository.deletePdfRow(pdfRowId)))) return;
     setPdfRows((current) => current.filter((row) => row.id !== pdfRowId));
-    setPdfs((current) => current.filter((pdf) => pdf.pdfRowId !== pdfRowId));
+    setBaseAreas((current) => current.filter((area) => area.pdfRowId !== pdfRowId));
+    setAdjusts((current) => current.filter((adjust) => adjust.pdfRowId !== pdfRowId));
   }
 
   function updateRow(rowId: string, label: string) {
@@ -393,89 +421,26 @@ export function App() {
         copiedColumn = await repository.saveCellImage(copiedColumn, rowId, file, image);
       }
 
-      const sourcePdfs = await repository.getColumnPdfs(source.id);
-      const copiedPdfs: ColumnPdf[] = [];
-
-      for (const sourcePdf of sourcePdfs) {
-        copiedPdfs.push(await copyPdfToColumn(sourcePdf, copiedColumn.id));
-      }
+      // PDF 파일·기준 영역은 공통이라 복사하지 않는다. 이 열의 미세조정 보정만 새 열로 복제한다.
+      const copiedAdjusts = adjusts
+        .filter((adjust) => adjust.columnId === source.id)
+        .map((adjust): ColumnPdfAdjust => ({
+          ...adjust,
+          id: repository.adjustId(copiedColumn.id, adjust.pdfRowId),
+          columnId: copiedColumn.id,
+          overrides: { ...adjust.overrides },
+          updatedAt: now,
+        }));
+      for (const adjust of copiedAdjusts) await repository.saveAdjust(adjust);
 
       setColumns((current) => [...current, copiedColumn]);
-      setPdfs((current) => [...current, ...copiedPdfs]);
+      setAdjusts((current) => [...current, ...copiedAdjusts]);
     } catch (error) {
       console.error("[column-duplicate] failed", error);
       setUploadNotice({
         tone: "error",
         title: "열 복사 실패",
         description: "값/이미지/PDF를 복사하지 못했습니다. 다시 시도해 주세요.",
-      });
-    } finally {
-      setBusyId(undefined);
-      setBusyFeedback(undefined);
-    }
-  }
-
-  async function copyPdfToColumn(sourcePdf: ColumnPdf, targetColumnId: string) {
-    const existing = findPdf(targetColumnId, sourcePdf.pdfRowId);
-    if (existing) await repository.deleteColumnPdf(existing.id);
-
-    const file = await repository.getColumnPdfFile(sourcePdf.id);
-    const copiedPdf: ColumnPdf = {
-      ...sourcePdf,
-      id: createId("pdf"),
-      columnId: targetColumnId,
-      file,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    await repository.saveColumnPdf(copiedPdf);
-
-    const sourceAreas = await repository.getAreas(sourcePdf.id);
-    const copiedAreas = sourceAreas.map((area): PdfArea => ({
-      ...area,
-      id: createId("area"),
-      columnPdfId: copiedPdf.id,
-    }));
-    await repository.replaceAreas(copiedPdf.id, copiedAreas);
-
-    return { ...copiedPdf, file: undefined };
-  }
-
-  async function copyPdfToRight(column: ValueColumn, pdf: ColumnPdf) {
-    const columnIndex = columns.findIndex((item) => item.id === column.id);
-    const targetColumn = columns[columnIndex + 1];
-    if (!targetColumn) {
-      setUploadNotice({
-        tone: "error",
-        title: "PDF 복사 실패",
-        description: "오른쪽 열이 없습니다.",
-      });
-      return;
-    }
-
-    setBusyId(pdf.id);
-    setBusyFeedback({
-      title: "PDF 복사 중",
-      description: `${targetColumn.name} 열로 PDF와 위치를 복사하고 있습니다.`,
-    });
-
-    try {
-      const copiedPdf = await copyPdfToColumn(pdf, targetColumn.id);
-      setPdfs((current) => [
-        ...current.filter((item) => !(item.columnId === targetColumn.id && item.pdfRowId === pdf.pdfRowId)),
-        copiedPdf,
-      ]);
-      setUploadNotice({
-        tone: "success",
-        title: "PDF 복사 완료",
-        description: `${targetColumn.name} 열에 같은 위치로 복사했습니다.`,
-      });
-    } catch (error) {
-      console.error("[pdf-copy] failed", error);
-      setUploadNotice({
-        tone: "error",
-        title: "PDF 복사 실패",
-        description: "PDF 파일을 다시 확인해 주세요.",
       });
     } finally {
       setBusyId(undefined);
@@ -762,10 +727,11 @@ export function App() {
       current?.anchor.columnId === columnId || current?.focus.columnId === columnId ? undefined : current,
     );
     setColumns((current) => current.filter((column) => column.id !== columnId));
-    setPdfs((current) => current.filter((pdf) => pdf.columnId !== columnId));
+    setAdjusts((current) => current.filter((adjust) => adjust.columnId !== columnId));
   }
 
-  async function uploadPdf(columnId: string, pdfRowId: string, file: File | undefined) {
+  /** PDF 행에 공통 PDF 1장을 올리거나 교체한다. */
+  async function uploadCommonPdf(pdfRow: PdfSlotRow, file: File | undefined) {
     if (!file) return;
     if (!(file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))) {
       setUploadNotice({
@@ -782,22 +748,10 @@ export function App() {
     });
 
     try {
-      const existing = findPdf(columnId, pdfRowId);
-      if (existing) await repository.deleteColumnPdf(existing.id);
-
-      const pdf: ColumnPdf = {
-        id: createId("pdf"),
-        columnId,
-        pdfRowId,
-        name: file.name,
-        file,
-        status: "draft",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-
-      await repository.saveColumnPdf(pdf);
-      setPdfs((current) => [...current.filter((item) => item.id !== existing?.id), { ...pdf, file: undefined }]);
+      pdfRowSaver.cancel(pdfRow.id);
+      const pdf: CommonPdf = { name: file.name, updatedAt: Date.now() };
+      const nextRow = await repository.saveCommonPdf(pdfRow, file, pdf);
+      setPdfRows((current) => current.map((row) => (row.id === pdfRow.id ? nextRow : row)));
       setUploadNotice({
         tone: "success",
         title: "PDF 입력 완료",
@@ -815,14 +769,10 @@ export function App() {
     }
   }
 
-  function pdfDropTargetId(columnId: string, pdfRowId: string) {
-    return `${columnId}:${pdfRowId}`;
-  }
-
-  function handlePdfDragOver(event: DragEvent, columnId: string, pdfRowId: string) {
+  function handlePdfDragOver(event: DragEvent, pdfRowId: string) {
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
-    setPdfDropTarget(pdfDropTargetId(columnId, pdfRowId));
+    setPdfDropTarget(pdfRowId);
   }
 
   function handlePdfDragLeave(event: DragEvent) {
@@ -830,11 +780,11 @@ export function App() {
     setPdfDropTarget(undefined);
   }
 
-  function handlePdfDrop(event: DragEvent, columnId: string, pdfRowId: string) {
+  function handlePdfDrop(event: DragEvent, pdfRow: PdfSlotRow) {
     event.preventDefault();
     event.stopPropagation();
     setPdfDropTarget(undefined);
-    void uploadPdf(columnId, pdfRowId, event.dataTransfer.files[0]);
+    void uploadCommonPdf(pdfRow, event.dataTransfer.files[0]);
   }
 
   async function uploadFont(file: File | undefined) {
@@ -854,46 +804,15 @@ export function App() {
     setFont(undefined);
   }
 
-  async function completeSetup(columnPdfId: string, areas?: PdfArea[]) {
-    const pdf = pdfs.find((item) => item.id === columnPdfId);
-    if (!pdf) return;
+  /** 한 (열 × PDF행) 결과 PDF를 생성한다. 공통 파일 + 기준 영역 + 이 열의 보정으로 채운다. */
+  async function downloadFilledPdf(column: ValueColumn, pdfRow: PdfSlotRow) {
+    if (!pdfRow.pdf) return;
+    const areas = areasForPdfRow(pdfRow.id);
+    if (areas.length === 0) return;
 
-    const savedAreas = areas ?? (await repository.getAreas(columnPdfId));
-    if (savedAreas.length === 0) {
-      return;
-    }
-
-    const updated: ColumnPdf = { ...pdf, status: "ready", updatedAt: Date.now() };
-    if (!(await persist(() => repository.saveColumnPdf(updated)))) return;
-    setPdfs((current) => current.map((item) => (item.id === columnPdfId ? updated : item)));
-  }
-
-  async function resetSetup(pdf: ColumnPdf) {
-    const updated: ColumnPdf = { ...pdf, status: "draft", updatedAt: Date.now() };
-    const ok = await persist(async () => {
-      await repository.clearAreas(pdf.id);
-      await repository.saveColumnPdf(updated);
-    });
-    if (!ok) return;
-    setPdfs((current) => current.map((item) => (item.id === pdf.id ? updated : item)));
-  }
-
-  async function deletePdf(pdf: ColumnPdf) {
-    if (!(await persist(() => repository.deleteColumnPdf(pdf.id)))) return;
-    setPdfs((current) => current.filter((item) => item.id !== pdf.id));
-  }
-
-  async function downloadFilledPdf(column: ValueColumn, pdf: ColumnPdf) {
-    setBusyId(pdf.id);
-    console.log("[pdf-download] 1. click", { columnId: column.id, pdfId: pdf.id, pdfName: pdf.name });
+    setBusyId(`${column.id}:${pdfRow.id}`);
     try {
-      console.log("[pdf-download] 2. load areas and source pdf");
-      const [areas, file] = await Promise.all([
-        repository.getAreas(pdf.id),
-        repository.getColumnPdfFile(pdf.id),
-      ]);
-      console.log("[pdf-download] 3. loaded source data", { areaCount: areas.length, fileSize: file.size });
-      console.log("[pdf-download] 4. load mapped images");
+      const file = await repository.getCommonPdfFile(pdfRow.id);
       const imageEntries = await Promise.all(
         areas
           .filter((area) => column.images?.[area.rowId])
@@ -902,9 +821,16 @@ export function App() {
             return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
           }),
       );
-      console.log("[pdf-download] 5. export pdf start", { imageCount: imageEntries.length });
-      await exportPdf({ ...pdf, file }, rows, column, areas, font, Object.fromEntries(imageEntries));
-      console.log("[pdf-download] 6. export pdf done");
+      await exportPdf({
+        file,
+        fileName: pdfRow.pdf.name,
+        rows,
+        column,
+        areas,
+        adjust: findAdjust(column.id, pdfRow.id),
+        fontAsset: font,
+        imageFiles: Object.fromEntries(imageEntries),
+      });
     } catch (error) {
       console.error("[pdf-download] failed", error);
       setUploadNotice({
@@ -913,20 +839,14 @@ export function App() {
         description: "PDF 원본을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
       });
     } finally {
-      console.log("[pdf-download] 7. cleanup busy state");
       setBusyId(undefined);
     }
   }
 
+  /** 이 열의 모든 PDF(기준 영역이 있는 PDF 행)를 한꺼번에 내려받는다. */
   async function downloadPdfColumn(column: ValueColumn) {
-    const columnPdfs = pdfRows
-      .map((pdfRow) => findPdf(column.id, pdfRow.id))
-      .filter((pdf): pdf is ColumnPdf => Boolean(pdf))
-      .filter((pdf) => pdf.status === "ready");
-
-    if (columnPdfs.length === 0) {
-      return;
-    }
+    const targets = pdfRows.filter((pdfRow) => pdfRow.pdf && areasForPdfRow(pdfRow.id).length > 0);
+    if (targets.length === 0) return;
 
     setBusyId(column.id);
     setBusyFeedback({
@@ -934,11 +854,9 @@ export function App() {
       description: "완료될 때까지 기다려주세요.",
     });
     try {
-      for (const pdf of columnPdfs) {
-        const [areas, file] = await Promise.all([
-          repository.getAreas(pdf.id),
-          repository.getColumnPdfFile(pdf.id),
-        ]);
+      for (const pdfRow of targets) {
+        const areas = areasForPdfRow(pdfRow.id);
+        const file = await repository.getCommonPdfFile(pdfRow.id);
         const imageEntries = await Promise.all(
           areas
             .filter((area) => column.images?.[area.rowId])
@@ -947,8 +865,16 @@ export function App() {
               return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
             }),
         );
-
-        await exportPdf({ ...pdf, file }, rows, column, areas, font, Object.fromEntries(imageEntries));
+        await exportPdf({
+          file,
+          fileName: pdfRow.pdf!.name,
+          rows,
+          column,
+          areas,
+          adjust: findAdjust(column.id, pdfRow.id),
+          fontAsset: font,
+          imageFiles: Object.fromEntries(imageEntries),
+        });
       }
     } catch (error) {
       console.error("[pdf-column-download] failed", error);
@@ -963,19 +889,12 @@ export function App() {
     }
   }
 
-  function pdfsForColumn(columnId: string) {
-    return pdfs.filter((pdf) => pdf.columnId === columnId);
-  }
-
-  function findPdf(columnId: string, pdfRowId: string) {
-    return pdfs.find((pdf) => pdf.columnId === columnId && pdf.pdfRowId === pdfRowId);
-  }
-
   function getColumnWidth(columnId: string) {
     return columnWidths[columnId] ?? 280;
   }
 
-  const totalMappedPdfs = pdfs.filter((pdf) => pdf.status === "ready").length;
+  const pdfRowsWithFile = pdfRows.filter((pdfRow) => pdfRow.pdf).length;
+  const pdfRowsReady = pdfRows.filter((pdfRow) => pdfRow.pdf && areasForPdfRow(pdfRow.id).length > 0).length;
 
   if (!SKIP_LOGIN && user === undefined) {
     return (
@@ -1020,7 +939,7 @@ export function App() {
         <div className="workspaceSummary" aria-label="작업 현황">
           <span>{rows.length}개 항목</span>
           <span>{columns.length}개 열</span>
-          <span>{totalMappedPdfs}/{pdfs.length} PDF</span>
+          <span>{pdfRowsReady}/{pdfRowsWithFile} PDF</span>
           {user ? (
             <button
               className="iconButton"
@@ -1215,104 +1134,91 @@ export function App() {
             ))}
             <div className="sheetCell sectionDownloadCell" />
 
-            {pdfRows.map((pdfRow) => (
-              <Fragment key={pdfRow.id}>
-                <div className="sheetCell rowLabel stickyCol">
-                  <input
-                    value={pdfRow.label}
-                    aria-label="PDF 행 이름"
-                    placeholder="PDF"
-                    onChange={(event) => void updatePdfRow(pdfRow.id, event.target.value)}
-                  />
-                  <button type="button" title="PDF 행 삭제" onClick={() => void deletePdfRow(pdfRow.id)}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                {columns.map((column) => {
-                  const pdf = findPdf(column.id, pdfRow.id);
-                  return (
-                    <div className="sheetCell pdfSlotCell" key={`${pdfRow.id}-${column.id}`}>
-                      {pdf ? (
-                        <div
-                          className={pdf.status === "ready" ? "pdfCard ready" : "pdfCard"}
-                          onClick={() => setActiveSetup({ column, pdf })}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") setActiveSetup({ column, pdf });
-                          }}
-                        >
-                          <button
-                            className="pdfCardDeleteButton"
-                            type="button"
-                            title="PDF 삭제"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void deletePdf(pdf);
-                            }}
-                          >
-                            <X size={13} />
+            {pdfRows.map((pdfRow) => {
+              const hasAreas = areasForPdfRow(pdfRow.id).length > 0;
+              return (
+                <Fragment key={pdfRow.id}>
+                  <div className="sheetCell rowLabel stickyCol pdfRowLabel">
+                    <div className="pdfRowLabelTop">
+                      <input
+                        value={pdfRow.label}
+                        aria-label="PDF 행 이름"
+                        placeholder="PDF"
+                        onChange={(event) => void updatePdfRow(pdfRow.id, event.target.value)}
+                      />
+                      <button type="button" title="PDF 행 삭제" onClick={() => void deletePdfRow(pdfRow.id)}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    {pdfRow.pdf ? (
+                      <div className="pdfRowCommon">
+                        <span className="pdfRowFileName" title={pdfRow.pdf.name}>
+                          <FileText size={13} />
+                          {pdfRow.pdf.name}
+                        </span>
+                        <div className="pdfRowCommonActions">
+                          <button type="button" onClick={() => setActiveSetup({ pdfRow })}>
+                            <Pencil size={13} />
+                            기준 영역
                           </button>
-                          <span>
-                            {pdf.name} ({pdf.status === "ready" ? "세팅 완료" : "세팅 전"})
-                          </span>
-                          <div className="pdfCardActions">
-                            <button
-                              type="button"
-                              title="오른쪽 열로 PDF 복사"
-                              disabled={busyId === pdf.id}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                void copyPdfToRight(column, pdf);
-                              }}
-                            >
-                              <Copy size={14} />
-                            </button>
-                            {pdf.status === "ready" ? (
-                              <>
-                                <button
-                                  type="button"
-                                  title="결과 PDF"
-                                  disabled={busyId === pdf.id}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void downloadFilledPdf(column, pdf);
-                                  }}
-                                >
-                                  <FileDown size={14} />
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
+                          <label className="pdfReplaceButton" title="PDF 교체">
+                            <Upload size={13} />
+                            교체
+                            <input
+                              type="file"
+                              accept="application/pdf"
+                              onChange={(event) => void uploadCommonPdf(pdfRow, event.target.files?.[0])}
+                            />
+                          </label>
                         </div>
+                      </div>
+                    ) : (
+                      <label
+                        className={pdfDropTarget === pdfRow.id ? "pdfUploadSlot dragging" : "pdfUploadSlot"}
+                        onDragOver={(event) => handlePdfDragOver(event, pdfRow.id)}
+                        onDragEnter={(event) => handlePdfDragOver(event, pdfRow.id)}
+                        onDragLeave={handlePdfDragLeave}
+                        onDrop={(event) => handlePdfDrop(event, pdfRow)}
+                      >
+                        <Upload size={15} />
+                        <span>PDF 드롭</span>
+                        <small>또는 클릭</small>
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          onChange={(event) => void uploadCommonPdf(pdfRow, event.target.files?.[0])}
+                        />
+                      </label>
+                    )}
+                  </div>
+                  {columns.map((column) => (
+                    <div className="sheetCell pdfSlotCell" key={`${pdfRow.id}-${column.id}`}>
+                      {!pdfRow.pdf ? (
+                        <span className="pdfSlotHint">왼쪽에 PDF를 올리세요</span>
+                      ) : !hasAreas ? (
+                        <span className="pdfSlotHint">왼쪽에서 기준 영역을 먼저 잡으세요</span>
                       ) : (
-                        <label
-                          className={
-                            pdfDropTarget === pdfDropTargetId(column.id, pdfRow.id)
-                              ? "pdfUploadSlot dragging"
-                              : "pdfUploadSlot"
-                          }
-                          onDragOver={(event) => handlePdfDragOver(event, column.id, pdfRow.id)}
-                          onDragEnter={(event) => handlePdfDragOver(event, column.id, pdfRow.id)}
-                          onDragLeave={handlePdfDragLeave}
-                          onDrop={(event) => handlePdfDrop(event, column.id, pdfRow.id)}
-                        >
-                          <Upload size={15} />
-                          <span>PDF 드롭</span>
-                          <small>또는 클릭</small>
-                          <input
-                            type="file"
-                            accept="application/pdf"
-                            onChange={(event) => void uploadPdf(column.id, pdfRow.id, event.target.files?.[0])}
-                          />
-                        </label>
+                        <div className="pdfColumnActions">
+                          <button type="button" onClick={() => setActiveSetup({ pdfRow, column })}>
+                            <SlidersHorizontal size={14} />
+                            미세조정
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busyId === `${column.id}:${pdfRow.id}`}
+                            onClick={() => void downloadFilledPdf(column, pdfRow)}
+                          >
+                            <FileDown size={14} />
+                            다운로드
+                          </button>
+                        </div>
                       )}
                     </div>
-                  );
-                })}
-                <div className="sheetCell emptyAddColumnCell" />
-              </Fragment>
-            ))}
+                  ))}
+                  <div className="sheetCell emptyAddColumnCell" />
+                </Fragment>
+              );
+            })}
 
             <div className="sheetCell addRowLabel stickyCol">
               <button className="addSheetButton" type="button" onClick={() => void addPdfRow()}>
@@ -1329,16 +1235,12 @@ export function App() {
 
       {activeSetup ? (
         <PdfSetupModal
+          pdfRow={activeSetup.pdfRow}
           column={activeSetup.column}
-          pdf={activeSetup.pdf}
           rows={rows}
           font={font}
           onClose={() => setActiveSetup(undefined)}
-          onSaved={(areas) => void completeSetup(activeSetup.pdf.id, areas)}
-          onReset={() => {
-            void resetSetup(activeSetup.pdf);
-            setActiveSetup(undefined);
-          }}
+          onSaved={() => void reloadPdfData()}
         />
       ) : null}
       {imagePreview ? (
