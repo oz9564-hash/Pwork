@@ -55,15 +55,22 @@ export async function exportPdf(
     const text = column.values[row.id] ?? "";
     if (!text) continue;
 
-    const y = pageHeight - boxTop - area.fontSize;
+    // 영역 너비는 세팅 당시 값 기준으로 저장된다. 이후 더 긴 값이 들어오면
+    // 줄바꿈으로 박스를 벗어나므로, 한 줄에 맞도록 글자 크기를 줄여서 그린다.
+    const maxWidth = area.width * pageWidth;
+    let size = area.fontSize;
+    const measured = font.widthOfTextAtSize(text, size);
+    if (measured > maxWidth && measured > 0) {
+      size = Math.max(4, size * (maxWidth / measured));
+    }
+    const y = pageHeight - boxTop - size;
 
     page.drawText(text, {
       x,
       y,
-      size: area.fontSize,
+      size,
       font,
       color: rgb(0, 0, 0),
-      maxWidth: area.width * pageWidth,
     });
   }
 
@@ -86,7 +93,9 @@ export async function exportPdf(
 async function embedUsableFont(pdfDocument: PDFDocument, fontAsset?: FontAsset) {
   if (fontAsset) {
     try {
-      const font = await pdfDocument.embedFont(await fontAsset.file.arrayBuffer());
+      // subset: true → 실제 사용된 글리프만 임베드한다. 한글 TTF는 수 MB라
+      // 전체 임베드 시 결과 PDF가 비대해지고 생성도 느려진다.
+      const font = await pdfDocument.embedFont(await fontAsset.file.arrayBuffer(), { subset: true });
       font.widthOfTextAtSize("test", 12);
       return font;
     } catch (error) {
@@ -104,7 +113,7 @@ async function embedDefaultFont(pdfDocument: PDFDocument) {
     try {
       const response = await fetch(`${import.meta.env.BASE_URL}${path}`);
       if (!response.ok) continue;
-      const font = await pdfDocument.embedFont(await response.arrayBuffer());
+      const font = await pdfDocument.embedFont(await response.arrayBuffer(), { subset: true });
       font.widthOfTextAtSize("test", 12);
       return font;
     } catch (error) {

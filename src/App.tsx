@@ -16,6 +16,7 @@ import {
 import { CellImageControl } from "./components/CellImageControl";
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { createId } from "./lib/ids";
+import { createDebouncedSaver } from "./lib/debounceSave";
 import { optimizeImageFile } from "./lib/imageOptimize";
 import { exportPdf } from "./services/pdfExport";
 import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
@@ -94,13 +95,48 @@ export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
 
+  // 텍스트 편집(셀 값/항목명/열 이름/PDF 행 이름)은 매 글자마다 전체 문서를 쓰지 않도록
+  // 문서 단위로 디바운스한다. 즉시 전체 문서를 쓰는 다른 경로(삭제/이미지/붙여넣기 등)는
+  // 최신 로컬 상태를 이미 반영하므로 해당 key의 예약을 cancel해 stale write를 막는다.
+  const notifySaveError = () =>
+    setUploadNotice({
+      tone: "error",
+      title: "저장 실패",
+      description: "변경 내용을 저장하지 못했습니다. 인터넷 연결을 확인해 주세요.",
+    });
+  const columnSaver = useRef(
+    createDebouncedSaver<ValueColumn>((column) => repository.saveColumn(column), { onError: notifySaveError }),
+  ).current;
+  const rowSaver = useRef(
+    createDebouncedSaver<FieldRow>((row) => repository.saveRow(row), { onError: notifySaveError }),
+  ).current;
+  const pdfRowSaver = useRef(
+    createDebouncedSaver<PdfSlotRow>((row) => repository.savePdfRow(row), { onError: notifySaveError }),
+  ).current;
+
   useEffect(() => {
     return watchAuth(setUser);
   }, []);
 
+  // 언마운트/페이지 종료 직전에 남은 편집을 마저 저장한다.
+  useEffect(() => {
+    const flushPending = () => {
+      void columnSaver.flushAll();
+      void rowSaver.flushAll();
+      void pdfRowSaver.flushAll();
+    };
+    window.addEventListener("beforeunload", flushPending);
+    return () => {
+      window.removeEventListener("beforeunload", flushPending);
+      flushPending();
+    };
+  }, [columnSaver, rowSaver, pdfRowSaver]);
+
   useEffect(() => {
     if (!uploadNotice) return undefined;
-    const timer = window.setTimeout(() => setUploadNotice(undefined), 2200);
+    // 에러는 사용자가 읽을 시간을 더 준다.
+    const duration = uploadNotice.tone === "error" ? 5000 : 2200;
+    const timer = window.setTimeout(() => setUploadNotice(undefined), duration);
     return () => window.clearTimeout(timer);
   }, [uploadNotice]);
 
@@ -235,26 +271,31 @@ export function App() {
     setPdfRows((current) => [...current, row]);
   }
 
-  async function updatePdfRow(pdfRowId: string, label: string) {
-    const nextRows = pdfRows.map((row) => (row.id === pdfRowId ? { ...row, label } : row));
-    const changed = nextRows.find((row) => row.id === pdfRowId);
-    if (!changed) return;
-    setPdfRows(nextRows);
-    await repository.savePdfRow(changed);
+  function updatePdfRow(pdfRowId: string, label: string) {
+    let changed: PdfSlotRow | undefined;
+    setPdfRows((current) => {
+      const next = current.map((row) => (row.id === pdfRowId ? { ...row, label } : row));
+      changed = next.find((row) => row.id === pdfRowId);
+      return next;
+    });
+    if (changed) pdfRowSaver.schedule(changed.id, changed);
   }
 
   async function deletePdfRow(pdfRowId: string) {
+    pdfRowSaver.cancel(pdfRowId);
     await repository.deletePdfRow(pdfRowId);
     setPdfRows((current) => current.filter((row) => row.id !== pdfRowId));
     setPdfs((current) => current.filter((pdf) => pdf.pdfRowId !== pdfRowId));
   }
 
-  async function updateRow(rowId: string, label: string) {
-    const nextRows = rows.map((row) => (row.id === rowId ? { ...row, label } : row));
-    const changed = nextRows.find((row) => row.id === rowId);
-    if (!changed) return;
-    setRows(nextRows);
-    await repository.saveRow(changed);
+  function updateRow(rowId: string, label: string) {
+    let changed: FieldRow | undefined;
+    setRows((current) => {
+      const next = current.map((row) => (row.id === rowId ? { ...row, label } : row));
+      changed = next.find((row) => row.id === rowId);
+      return next;
+    });
+    if (changed) rowSaver.schedule(changed.id, changed);
   }
 
   async function moveRow(draggedRowId: string, targetRowId: string) {
@@ -271,10 +312,17 @@ export function App() {
     const changedRows = reorderedRows.filter((row, index) => row.createdAt !== rows[index]?.createdAt || row.id !== rows[index]?.id);
 
     setRows(reorderedRows);
+    // 재정렬 결과는 즉시 기록한다. 이 행들에 대해 디바운스 예약된 라벨 저장이
+    // 나중에 실행돼 createdAt(정렬 인덱스)을 되돌리지 않도록 예약을 취소한다.
+    changedRows.forEach((row) => rowSaver.cancel(row.id));
     await Promise.all(changedRows.map((row) => repository.saveRow(row)));
   }
 
   async function deleteRow(rowId: string) {
+    // 삭제될 행의 라벨 저장 예약은 버리고, 셀 값 편집 예약은 먼저 반영한 뒤 삭제한다.
+    // (repository.deleteRow가 각 열에서 이 행의 값을 제거하므로 순서가 중요하다.)
+    rowSaver.cancel(rowId);
+    await columnSaver.flushAll();
     await repository.deleteRow(rowId);
     setSheetSelection((current) =>
       current?.anchor.rowId === rowId || current?.focus.rowId === rowId ? undefined : current,
@@ -287,7 +335,6 @@ export function App() {
         return { ...column, values, images };
       }),
     );
-    setPdfs((current) => [...current]);
   }
 
   async function addColumn() {
@@ -339,6 +386,11 @@ export function App() {
       setPdfs((current) => [...current, ...copiedPdfs]);
     } catch (error) {
       console.error("[column-duplicate] failed", error);
+      setUploadNotice({
+        tone: "error",
+        title: "열 복사 실패",
+        description: "값/이미지/PDF를 복사하지 못했습니다. 다시 시도해 주세요.",
+      });
     } finally {
       setBusyId(undefined);
       setBusyFeedback(undefined);
@@ -413,26 +465,30 @@ export function App() {
     }
   }
 
-  async function updateColumnName(columnId: string, name: string) {
-    const nextColumns = columns.map((column) =>
-      column.id === columnId ? { ...column, name, updatedAt: Date.now() } : column,
-    );
-    const changed = nextColumns.find((column) => column.id === columnId);
-    if (!changed) return;
-    setColumns(nextColumns);
-    await repository.saveColumn(changed);
+  function updateColumnName(columnId: string, name: string) {
+    let changed: ValueColumn | undefined;
+    setColumns((current) => {
+      const next = current.map((column) =>
+        column.id === columnId ? { ...column, name, updatedAt: Date.now() } : column,
+      );
+      changed = next.find((column) => column.id === columnId);
+      return next;
+    });
+    if (changed) columnSaver.schedule(changed.id, changed);
   }
 
-  async function updateCell(columnId: string, rowId: string, value: string) {
-    const nextColumns = columns.map((column) =>
-      column.id === columnId
-        ? { ...column, values: { ...column.values, [rowId]: value }, updatedAt: Date.now() }
-        : column,
-    );
-    const changed = nextColumns.find((column) => column.id === columnId);
-    if (!changed) return;
-    setColumns(nextColumns);
-    await repository.saveColumn(changed);
+  function updateCell(columnId: string, rowId: string, value: string) {
+    let changed: ValueColumn | undefined;
+    setColumns((current) => {
+      const next = current.map((column) =>
+        column.id === columnId
+          ? { ...column, values: { ...column.values, [rowId]: value }, updatedAt: Date.now() }
+          : column,
+      );
+      changed = next.find((column) => column.id === columnId);
+      return next;
+    });
+    if (changed) columnSaver.schedule(changed.id, changed);
   }
 
   async function pasteSheetCells(startRowId: string, startColumnId: string | undefined, cells: string[][]) {
@@ -508,11 +564,16 @@ export function App() {
         columnId: targetColumnCount > 0 ? nextColumns[targetColumnCount - 1]?.id : undefined,
       },
     });
+    const rowsToSave = nextRows.filter((row) => changedRows.has(row.id) || !existingRowIds.has(row.id));
+    const columnsToSave = nextColumns.filter(
+      (column) => changedColumnIds.has(column.id) || !existingColumnIds.has(column.id),
+    );
+    // 붙여넣기로 즉시 기록하는 행/열은 디바운스 예약을 취소해 나중에 stale write가 끼어들지 않게 한다.
+    rowsToSave.forEach((row) => rowSaver.cancel(row.id));
+    columnsToSave.forEach((column) => columnSaver.cancel(column.id));
     await Promise.all([
-      ...nextRows.filter((row) => changedRows.has(row.id) || !existingRowIds.has(row.id)).map((row) => repository.saveRow(row)),
-      ...nextColumns
-        .filter((column) => changedColumnIds.has(column.id) || !existingColumnIds.has(column.id))
-        .map((column) => repository.saveColumn(column)),
+      ...rowsToSave.map((row) => repository.saveRow(row)),
+      ...columnsToSave.map((column) => repository.saveColumn(column)),
     ]);
   }
 
@@ -545,30 +606,70 @@ export function App() {
     };
   }
 
+  function getSheetSelectionBounds() {
+    if (!sheetSelection) return undefined;
+
+    const anchor = getSheetPointIndexes(sheetSelection.anchor);
+    const focus = getSheetPointIndexes(sheetSelection.focus);
+    if (
+      anchor.rowIndex < 0 ||
+      focus.rowIndex < 0 ||
+      (sheetSelection.anchor.columnId && anchor.columnIndex < 0) ||
+      (sheetSelection.focus.columnId && focus.columnIndex < 0)
+    ) {
+      return undefined;
+    }
+
+    return {
+      minRow: Math.min(anchor.rowIndex, focus.rowIndex),
+      maxRow: Math.max(anchor.rowIndex, focus.rowIndex),
+      minColumn: Math.min(anchor.columnIndex, focus.columnIndex),
+      maxColumn: Math.max(anchor.columnIndex, focus.columnIndex),
+    };
+  }
+
+  function getSheetCellCopyValue(row: FieldRow, columnIndex: number) {
+    if (columnIndex < 0) return row.label;
+    const column = columns[columnIndex];
+    if (!column) return "";
+    return column.images?.[row.id]?.name ?? column.values[row.id] ?? "";
+  }
+
+  function handleSheetCopy(event: ClipboardEvent<HTMLElement>) {
+    const bounds = getSheetSelectionBounds();
+    if (!bounds) return;
+
+    const text = rows
+      .slice(bounds.minRow, bounds.maxRow + 1)
+      .map((row) => {
+        const values: string[] = [];
+        for (let columnIndex = bounds.minColumn; columnIndex <= bounds.maxColumn; columnIndex += 1) {
+          values.push(getSheetCellCopyValue(row, columnIndex));
+        }
+        return values.join("\t");
+      })
+      .join("\n");
+
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", text);
+  }
+
   function getSheetCellClass(rowId: string, columnId?: string) {
     const classes = ["sheetCell"];
     if (!sheetSelection) return classes.join(" ");
 
     const cellRowIndex = rows.findIndex((row) => row.id === rowId);
     const cellColumnIndex = columnId ? columns.findIndex((column) => column.id === columnId) : -1;
-    const anchor = getSheetPointIndexes(sheetSelection.anchor);
-    const focus = getSheetPointIndexes(sheetSelection.focus);
-    if (
-      cellRowIndex < 0 ||
-      (columnId && cellColumnIndex < 0) ||
-      anchor.rowIndex < 0 ||
-      focus.rowIndex < 0 ||
-      (sheetSelection.anchor.columnId && anchor.columnIndex < 0) ||
-      (sheetSelection.focus.columnId && focus.columnIndex < 0)
-    ) {
+    const bounds = getSheetSelectionBounds();
+    if (cellRowIndex < 0 || (columnId && cellColumnIndex < 0) || !bounds) {
       return classes.join(" ");
     }
 
-    const minRow = Math.min(anchor.rowIndex, focus.rowIndex);
-    const maxRow = Math.max(anchor.rowIndex, focus.rowIndex);
-    const minColumn = Math.min(anchor.columnIndex, focus.columnIndex);
-    const maxColumn = Math.max(anchor.columnIndex, focus.columnIndex);
-    const selected = cellRowIndex >= minRow && cellRowIndex <= maxRow && cellColumnIndex >= minColumn && cellColumnIndex <= maxColumn;
+    const selected =
+      cellRowIndex >= bounds.minRow &&
+      cellRowIndex <= bounds.maxRow &&
+      cellColumnIndex >= bounds.minColumn &&
+      cellColumnIndex <= bounds.maxColumn;
     const active = sheetSelection.anchor.rowId === rowId && sheetSelection.anchor.columnId === columnId;
 
     if (selected) classes.push("selectedSheetCell");
@@ -583,6 +684,9 @@ export function App() {
     });
 
     try {
+      // 이 열에 디바운스 예약된 텍스트 저장이 이미지 저장 뒤 실행돼 이미지를 덮어쓰지 않도록
+      // 예약을 취소한다. (saveCellImage는 최신 상태의 column으로 전체 문서를 쓴다.)
+      columnSaver.cancel(column.id);
       const optimized = await optimizeImageFile(file);
       const changed = await repository.saveCellImage(column, rowId, optimized.file, {
         name: optimized.name,
@@ -610,6 +714,7 @@ export function App() {
   }
 
   async function clearCellImage(column: ValueColumn, rowId: string) {
+    columnSaver.cancel(column.id);
     const changed = await repository.clearCellImage(column, rowId);
     setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
   }
@@ -627,6 +732,8 @@ export function App() {
   }
 
   async function deleteColumn(columnId: string) {
+    // 삭제되는 열의 디바운스 저장이 삭제 후 실행돼 문서를 되살리지 않도록 예약을 취소한다.
+    columnSaver.cancel(columnId);
     await repository.deleteColumn(columnId);
     setSheetSelection((current) =>
       current?.anchor.columnId === columnId || current?.focus.columnId === columnId ? undefined : current,
@@ -774,6 +881,11 @@ export function App() {
       console.log("[pdf-download] 6. export pdf done");
     } catch (error) {
       console.error("[pdf-download] failed", error);
+      setUploadNotice({
+        tone: "error",
+        title: "PDF 다운로드 실패",
+        description: "PDF 원본을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      });
     } finally {
       console.log("[pdf-download] 7. cleanup busy state");
       setBusyId(undefined);
@@ -814,6 +926,11 @@ export function App() {
       }
     } catch (error) {
       console.error("[pdf-column-download] failed", error);
+      setUploadNotice({
+        tone: "error",
+        title: "일괄 다운로드 실패",
+        description: "일부 PDF를 만들지 못했습니다. 다시 시도해 주세요.",
+      });
     } finally {
       setBusyId(undefined);
       setBusyFeedback(undefined);
@@ -903,6 +1020,7 @@ export function App() {
         <section
           ref={sheetWrapRef}
           className="sheetWrap"
+          onCopyCapture={handleSheetCopy}
           style={{ "--sheet-zoom": sheetZoom } as CSSProperties}
         >
           <div
