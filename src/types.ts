@@ -36,6 +36,9 @@ export type PdfSlotRow = {
   pdf?: CommonPdf;
 };
 
+/** 영역을 렌더링하는 방식. 보통은 셀 내용에서 파생되지만 명시 지정도 가능하다. */
+export type PdfAreaKind = "text" | "image";
+
 /**
  * 기준 영역. "어떤 항목(rowId)을 PDF 어디에(x/y/크기/페이지) 찍을지"의 원본 레이아웃.
  * PDF 행(공통 PDF)에 1벌만 존재하며 모든 값 열이 공유한다.
@@ -50,6 +53,11 @@ export type PdfArea = {
   width: number;
   height: number;
   fontSize: number;
+  /**
+   * 렌더 타입. 보통은 (영역 row × 열 셀 내용)에서 파생되므로 비워 둔다.
+   * 값이 있으면 파생보다 우선한다. (하위호환: 기존 문서엔 없음)
+   */
+  kind?: PdfAreaKind;
 };
 
 /** 정규화(0~1, 페이지 비율) 좌표 오프셋. */

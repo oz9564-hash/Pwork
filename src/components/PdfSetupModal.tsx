@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { ChevronLeft, ChevronRight, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { createId } from "../lib/ids";
 import { repository } from "../services/storage";
+import { renderFilledPdf } from "../services/pdfExport";
+import { resolveAreaKind } from "../services/pdf/areaKind";
 import type { ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -68,6 +70,17 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
   const [error, setError] = useState("");
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  const [imageBlobs, setImageBlobs] = useState<Record<string, Blob>>({});
+  const [fileBlob, setFileBlob] = useState<Blob>();
+  // 모달은 수정(편집) 상태로 시작한다. 미리보기는 「미리보기」 버튼으로 진입한다.
+  // base 모드는 항상 편집 상태.
+  const [editing, setEditing] = useState(true);
+  // 미리보기 모드(adjust && !editing)에서는 실제 결과 PDF를 생성해 보여준다.
+  const [previewDoc, setPreviewDoc] = useState<PDFDocumentProxy>();
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const canEdit = !isAdjust || editing;
+  const showPreview = isAdjust && !editing;
+  const activeDoc = showPreview ? previewDoc : pdfDocument;
 
   const firstRowId = rows[0]?.id ?? "";
 
@@ -88,6 +101,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
         loadedDocument = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
 
         if (!alive) return;
+        setFileBlob(file);
         setAreas(loadedAreas);
         if (isAdjust && column) {
           const id = repository.adjustId(column.id, pdfRow.id);
@@ -112,15 +126,16 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     };
   }, [pdfRow.id, firstRowId, isAdjust, column]);
 
+  // 편집/기준 모드는 원본 문서를, 미리보기 모드는 생성된 결과 문서를 캔버스에 그린다.
   useEffect(() => {
-    if (!pdfDocument) return;
+    if (!activeDoc) return;
     let cancelled = false;
 
     async function renderPage() {
       const canvas = canvasRef.current;
-      if (!canvas || !pdfDocument) return;
+      if (!canvas || !activeDoc) return;
 
-      const loadedPage = await pdfDocument.getPage(page);
+      const loadedPage = await activeDoc.getPage(page);
       const viewport = loadedPage.getViewport({ scale: DISPLAY_SCALE });
       const context = canvas.getContext("2d");
       if (!context || cancelled) return;
@@ -136,7 +151,48 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     return () => {
       cancelled = true;
     };
-  }, [pdfDocument, page]);
+  }, [activeDoc, page]);
+
+  // 미리보기 진입 시 실제 결과 PDF를 생성해 pdf.js 문서로 만든다(= 다운로드와 동일한 출력).
+  useEffect(() => {
+    if (!showPreview || !column || !fileBlob) {
+      setPreviewDoc(undefined);
+      return;
+    }
+    let alive = true;
+    let builtDoc: PDFDocumentProxy | undefined;
+
+    async function buildPreview() {
+      try {
+        setPreviewBusy(true);
+        const output = await renderFilledPdf({
+          file: fileBlob!,
+          rows,
+          column: column!,
+          areas,
+          adjust,
+          fontAsset: font,
+          imageFiles: imageBlobs,
+        });
+        builtDoc = await pdfjsLib.getDocument({ data: new Uint8Array(output) }).promise;
+        if (!alive) {
+          void builtDoc.destroy();
+          return;
+        }
+        setPreviewDoc(builtDoc);
+      } catch (previewError) {
+        console.error("[pdf-preview] failed", previewError);
+      } finally {
+        if (alive) setPreviewBusy(false);
+      }
+    }
+
+    void buildPreview();
+    return () => {
+      alive = false;
+      void builtDoc?.destroy();
+    };
+  }, [showPreview, fileBlob, areas, adjust, font, imageBlobs, rows, column]);
 
   // 드래그: base 모드는 기준 영역을, adjust 모드는 해당 영역의 개별 보정을 움직인다.
   useEffect(() => {
@@ -192,6 +248,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       };
       const base = deltas[event.key];
       if (!base) return;
+      if (isAdjust && !editing) return; // 미리보기 상태에서는 움직이지 않는다.
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "SELECT" || target.tagName === "TEXTAREA")) {
         return;
@@ -230,7 +287,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [size, isAdjust, selectedAreaId]);
+  }, [size, isAdjust, selectedAreaId, editing]);
 
   // adjust 모드: 이 열 셀 이미지 미리보기 URL 로드
   useEffect(() => {
@@ -245,13 +302,16 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
             const file = await repository.getCellImageFile(column!.id, rowId, image);
             const url = URL.createObjectURL(file);
             urls.push(url);
-            return [rowId, url] as const;
+            return [rowId, { url, file }] as const;
           } catch {
             return undefined;
           }
         }),
       );
-      if (alive) setImageUrls(Object.fromEntries(entries.filter((entry) => entry !== undefined)));
+      if (!alive) return;
+      const valid = entries.filter((entry): entry is NonNullable<typeof entry> => entry !== undefined);
+      setImageUrls(Object.fromEntries(valid.map(([rowId, value]) => [rowId, value.url])));
+      setImageBlobs(Object.fromEntries(valid.map(([rowId, value]) => [rowId, value.file])));
     }
 
     void loadImages();
@@ -274,8 +334,8 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     return column.values[rowId] ?? "";
   }
 
-  function isImageRow(rowId: string) {
-    return Boolean(column?.images?.[rowId]);
+  function isImageArea(area: PdfArea) {
+    return resolveAreaKind(area, column) === "image";
   }
 
   /** 기준 영역에 adjust(전체+개별)를 더한 화면 좌표. */
@@ -319,6 +379,8 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       width,
       height,
       fontSize: DEFAULT_FONT_SIZE,
+      // kind는 일부러 비워 둔다. 타입은 (이 영역 row × 열 셀 내용)에서 파생되므로
+      // 명시값을 박으면 이미지가 올라온 열에서도 text로 굳어 버린다.
     };
 
     setAreas((current) => [...current, area]);
@@ -329,6 +391,8 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     event.preventDefault();
     event.stopPropagation();
     setSelectedAreaId(area.id);
+    // 미리보기 상태에서 블록을 누르면 편집 상태로 진입한다.
+    if (isAdjust && !editing) setEditing(true);
     if (isAdjust) {
       const override = adjust.overrides[area.id] ?? { dx: 0, dy: 0 };
       dragRef.current = {
@@ -449,7 +513,18 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                   className={row.id === selectedRowId ? "fieldButton active" : "fieldButton"}
                   key={row.id}
                   type="button"
-                  onClick={() => setSelectedRowId(row.id)}
+                  onClick={() => {
+                    setSelectedRowId(row.id);
+                    if (isAdjust) {
+                      // 항목 블록을 누르면 편집 상태로 들어가 그 항목의 영역을 선택한다.
+                      if (!editing) setEditing(true);
+                      const area = areas.find((entry) => entry.rowId === row.id);
+                      if (area) {
+                        setSelectedAreaId(area.id);
+                        setPage(area.page);
+                      }
+                    }
+                  }}
                 >
                   <span>{row.label || "항목 없음"}</span>
                   <strong>{getAreaValue(row.id) || "값 없음"}</strong>
@@ -469,7 +544,17 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
               </button>
             ) : null}
 
-            {isAdjust ? (
+            {isAdjust && !editing ? (
+              <div className="areaEditor">
+                <p>미리보기 상태입니다. PDF 위 블록을 클릭하거나 아래 버튼으로 수정하세요.</p>
+                <button className="button primary full" type="button" onClick={() => setEditing(true)}>
+                  <Pencil size={16} />
+                  수정하기
+                </button>
+              </div>
+            ) : null}
+
+            {isAdjust && editing ? (
               <div className="areaEditor">
                 <div className="railTitle">전체 이동 (px)</div>
                 <label>
@@ -492,13 +577,25 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                   <RotateCcw size={16} />
                   전체 보정 초기화
                 </button>
+                <button
+                  className="button secondary full"
+                  type="button"
+                  onClick={() => {
+                    setEditing(false);
+                    setSelectedAreaId("");
+                  }}
+                >
+                  <Eye size={16} />
+                  미리보기
+                </button>
               </div>
             ) : null}
 
-            <div className="areaEditor">
-              <div className="railTitle">선택 영역</div>
-              {selectedArea ? (
-                isAdjust ? (
+            {canEdit ? (
+              <div className="areaEditor">
+                <div className="railTitle">선택 영역</div>
+                {selectedArea ? (
+                  isAdjust ? (
                   <>
                     <label>
                       좌우 보정(px)
@@ -552,10 +649,11 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                     </button>
                   </>
                 )
-              ) : (
-                <p>PDF 위 영역을 선택하세요.</p>
-              )}
-            </div>
+                ) : (
+                  <p>PDF 위 영역을 선택하세요.</p>
+                )}
+              </div>
+            ) : null}
           </aside>
 
           <div className="pdfStageWrap">
@@ -585,9 +683,11 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
 
             <div className="pdfScroll">
               {loading ? <div className="loading">PDF 로딩 중</div> : null}
+              {previewBusy ? <div className="loading">미리보기 만드는 중</div> : null}
               {error ? <div className="loading">{error}</div> : null}
               <div className="pdfCanvasBox" style={{ width: size.width, height: size.height }}>
                 <canvas ref={canvasRef} />
+                {canEdit ? (
                 <div
                   className="areaOverlay"
                   ref={overlayRef}
@@ -623,7 +723,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         }}
                         onPointerDown={(event) => startDrag(event, area)}
                       >
-                        {isImageRow(area.rowId) && imageUrls[area.rowId] ? (
+                        {isImageArea(area) && imageUrls[area.rowId] ? (
                           <img src={imageUrls[area.rowId]} alt={getAreaValue(area.rowId)} />
                         ) : (
                           <span>{getAreaValue(area.rowId)}</span>
@@ -646,6 +746,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                     );
                   })}
                 </div>
+                ) : null}
               </div>
             </div>
           </div>
