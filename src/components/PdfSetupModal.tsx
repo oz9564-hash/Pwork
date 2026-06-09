@@ -50,8 +50,6 @@ const EMPTY_ADJUST = (columnId: string, pdfRowId: string): ColumnPdfAdjust => ({
   id: repository.adjustId(columnId, pdfRowId),
   columnId,
   pdfRowId,
-  dx: 0,
-  dy: 0,
   overrides: {},
   updatedAt: Date.now(),
 });
@@ -312,8 +310,6 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
               },
             };
           });
-        } else {
-          setAdjust((current) => ({ ...current, dx: current.dx + ndx, dy: current.dy + ndy }));
         }
       } else if (selectedAreaId) {
         setAreas((current) =>
@@ -485,11 +481,6 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     setSelectedAreaId((current) => (current === id ? "" : current));
   }
 
-  function setGlobalOffsetPx(axis: "dx" | "dy", px: number) {
-    const denom = axis === "dx" ? size.width : size.height;
-    setAdjust((current) => ({ ...current, [axis]: px / denom }));
-  }
-
   function setOverridePx(areaId: string, axis: "dx" | "dy", px: number) {
     const denom = axis === "dx" ? size.width : size.height;
     setAdjust((current) => {
@@ -521,8 +512,9 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     });
   }
 
+  /** 이 열의 모든 영역 보정(위치·크기)을 한 번에 초기화. */
   function resetAllAdjust() {
-    setAdjust((current) => ({ ...current, dx: 0, dy: 0, overrides: {} }));
+    setAdjust((current) => ({ ...current, overrides: {} }));
   }
 
   function resetSelectedOverride() {
@@ -574,7 +566,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
             </h2>
             <p>
               {isAdjust
-                ? "영역을 드래그하거나 방향키로 살짝 밀어 이 열만 맞춥니다. (Shift+방향키 10px, 미선택 시 전체 이동)"
+                ? "영역을 선택해 드래그하거나 방향키로 살짝 밀어 이 열만 맞춥니다. (Shift+방향키 10px)"
                 : "왼쪽 항목을 선택한 뒤 PDF 위를 클릭하면 기준 영역이 추가됩니다. 모든 열이 이 위치를 공유합니다."}
             </p>
           </div>
@@ -635,23 +627,6 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
 
             {isAdjust && editing ? (
               <div className="areaEditor">
-                <div className="railTitle">전체 이동 (px)</div>
-                <label>
-                  좌우(dx)
-                  <input
-                    type="number"
-                    value={Math.round(adjust.dx * size.width)}
-                    onChange={(event) => setGlobalOffsetPx("dx", Number(event.target.value))}
-                  />
-                </label>
-                <label>
-                  상하(dy)
-                  <input
-                    type="number"
-                    value={Math.round(adjust.dy * size.height)}
-                    onChange={(event) => setGlobalOffsetPx("dy", Number(event.target.value))}
-                  />
-                </label>
                 <button className="button secondary full" type="button" onClick={resetAllAdjust}>
                   <RotateCcw size={16} />
                   전체 보정 초기화

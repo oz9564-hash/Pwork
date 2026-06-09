@@ -10,18 +10,16 @@ export type ResolvedArea = {
 };
 
 /**
- * 기준 영역에 이 열의 전체 오프셋(dx/dy) + 개별 보정(위치 오프셋 + 크기 덮어쓰기)을
- * 모두 반영한 최종 영역을 돌려준다. UI와 렌더러가 공유하는 단일 소스.
+ * 기준 영역에 이 열의 개별 보정(영역별 위치 오프셋 + 크기 덮어쓰기)을
+ * 반영한 최종 영역을 돌려준다. UI와 렌더러가 공유하는 단일 소스.
  *
  * 열별 속성(fontSize 등)을 추가할 때도 여기 한 곳만 확장하면 된다.
  */
 export function resolveArea(area: PdfArea, adjust?: ColumnPdfAdjust): ResolvedArea {
   const override = adjust?.overrides?.[area.id];
-  const dx = (adjust?.dx ?? 0) + (override?.dx ?? 0);
-  const dy = (adjust?.dy ?? 0) + (override?.dy ?? 0);
   return {
-    x: area.x + dx,
-    y: area.y + dy,
+    x: area.x + (override?.dx ?? 0),
+    y: area.y + (override?.dy ?? 0),
     width: override?.width ?? area.width,
     height: override?.height ?? area.height,
     fontSize: area.fontSize,

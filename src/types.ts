@@ -60,12 +60,6 @@ export type PdfArea = {
   kind?: PdfAreaKind;
 };
 
-/** 정규화(0~1, 페이지 비율) 좌표 오프셋. */
-export type AreaOffset = {
-  dx: number;
-  dy: number;
-};
-
 /**
  * 열별 개별 영역 보정. 기준 영역(PdfArea) 위에 이 열에서만 덧씌운다.
  * - dx/dy: 위치 오프셋(정규화)
@@ -83,15 +77,12 @@ export type AreaOverride = {
 
 /**
  * 열별 미세조정. 기준 영역 위에 (열 × PDF행) 단위로 덧씌우는 보정값.
- * - dx/dy: 이 열의 모든 영역을 통째로 미는 전체 오프셋
  * - overrides: 특정 영역(areaId)만 미는 위치 보정 + 크기 덮어쓰기
  */
 export type ColumnPdfAdjust = {
   id: string;
   columnId: string;
   pdfRowId: string;
-  dx: number;
-  dy: number;
   overrides: Record<string, AreaOverride>;
   updatedAt: number;
 };
