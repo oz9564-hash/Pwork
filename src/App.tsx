@@ -104,6 +104,21 @@ export function App() {
       title: "저장 실패",
       description: "변경 내용을 저장하지 못했습니다. 인터넷 연결을 확인해 주세요.",
     });
+
+  /**
+   * 영속화 호출을 감싸 실패를 사용자에게 알린다. 성공 여부를 boolean으로 돌려주므로
+   * 낙관적 상태 갱신을 "저장 성공 후"로 미뤄 화면과 DB의 불일치(유령 데이터)를 막는다.
+   */
+  async function persist(action: () => Promise<unknown>): Promise<boolean> {
+    try {
+      await action();
+      return true;
+    } catch (error) {
+      console.error("[persist] failed", error);
+      notifySaveError();
+      return false;
+    }
+  }
   const columnSaver = useRef(
     createDebouncedSaver<ValueColumn>((column) => repository.saveColumn(column), { onError: notifySaveError }),
   ).current;
@@ -245,8 +260,11 @@ export function App() {
       updatedAt: now + 10,
     };
 
-    for (const row of nextRows) await repository.saveRow(row);
-    await repository.saveColumn(column);
+    const ok = await persist(async () => {
+      for (const row of nextRows) await repository.saveRow(row);
+      await repository.saveColumn(column);
+    });
+    if (!ok) return;
     setRows(nextRows);
     setColumns([column]);
   }
@@ -257,7 +275,7 @@ export function App() {
       label: "",
       createdAt: Date.now(),
     };
-    await repository.saveRow(row);
+    if (!(await persist(() => repository.saveRow(row)))) return;
     setRows((current) => [...current, row]);
   }
 
@@ -267,7 +285,7 @@ export function App() {
       label: `PDF ${pdfRows.length + 1}`,
       createdAt: Date.now(),
     };
-    await repository.savePdfRow(row);
+    if (!(await persist(() => repository.savePdfRow(row)))) return;
     setPdfRows((current) => [...current, row]);
   }
 
@@ -283,7 +301,7 @@ export function App() {
 
   async function deletePdfRow(pdfRowId: string) {
     pdfRowSaver.cancel(pdfRowId);
-    await repository.deletePdfRow(pdfRowId);
+    if (!(await persist(() => repository.deletePdfRow(pdfRowId)))) return;
     setPdfRows((current) => current.filter((row) => row.id !== pdfRowId));
     setPdfs((current) => current.filter((pdf) => pdf.pdfRowId !== pdfRowId));
   }
@@ -315,7 +333,7 @@ export function App() {
     // 재정렬 결과는 즉시 기록한다. 이 행들에 대해 디바운스 예약된 라벨 저장이
     // 나중에 실행돼 createdAt(정렬 인덱스)을 되돌리지 않도록 예약을 취소한다.
     changedRows.forEach((row) => rowSaver.cancel(row.id));
-    await Promise.all(changedRows.map((row) => repository.saveRow(row)));
+    await persist(() => Promise.all(changedRows.map((row) => repository.saveRow(row))));
   }
 
   async function deleteRow(rowId: string) {
@@ -323,7 +341,7 @@ export function App() {
     // (repository.deleteRow가 각 열에서 이 행의 값을 제거하므로 순서가 중요하다.)
     rowSaver.cancel(rowId);
     await columnSaver.flushAll();
-    await repository.deleteRow(rowId);
+    if (!(await persist(() => repository.deleteRow(rowId)))) return;
     setSheetSelection((current) =>
       current?.anchor.rowId === rowId || current?.focus.rowId === rowId ? undefined : current,
     );
@@ -346,7 +364,7 @@ export function App() {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    await repository.saveColumn(column);
+    if (!(await persist(() => repository.saveColumn(column)))) return;
     setColumns((current) => [...current, column]);
   }
 
@@ -715,8 +733,13 @@ export function App() {
 
   async function clearCellImage(column: ValueColumn, rowId: string) {
     columnSaver.cancel(column.id);
-    const changed = await repository.clearCellImage(column, rowId);
-    setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
+    let changed: ValueColumn | undefined;
+    const ok = await persist(async () => {
+      changed = await repository.clearCellImage(column, rowId);
+    });
+    if (!ok || !changed) return;
+    const next = changed;
+    setColumns((current) => current.map((item) => (item.id === column.id ? next : item)));
   }
 
   async function openCellImagePreview(column: ValueColumn, rowId: string) {
@@ -734,7 +757,7 @@ export function App() {
   async function deleteColumn(columnId: string) {
     // 삭제되는 열의 디바운스 저장이 삭제 후 실행돼 문서를 되살리지 않도록 예약을 취소한다.
     columnSaver.cancel(columnId);
-    await repository.deleteColumn(columnId);
+    if (!(await persist(() => repository.deleteColumn(columnId)))) return;
     setSheetSelection((current) =>
       current?.anchor.columnId === columnId || current?.focus.columnId === columnId ? undefined : current,
     );
@@ -822,12 +845,12 @@ export function App() {
       file,
       updatedAt: Date.now(),
     };
-    await repository.saveFont(nextFont);
+    if (!(await persist(() => repository.saveFont(nextFont)))) return;
     setFont(nextFont);
   }
 
   async function clearFont() {
-    await repository.clearFont();
+    if (!(await persist(() => repository.clearFont()))) return;
     setFont(undefined);
   }
 
@@ -841,19 +864,22 @@ export function App() {
     }
 
     const updated: ColumnPdf = { ...pdf, status: "ready", updatedAt: Date.now() };
-    await repository.saveColumnPdf(updated);
+    if (!(await persist(() => repository.saveColumnPdf(updated)))) return;
     setPdfs((current) => current.map((item) => (item.id === columnPdfId ? updated : item)));
   }
 
   async function resetSetup(pdf: ColumnPdf) {
     const updated: ColumnPdf = { ...pdf, status: "draft", updatedAt: Date.now() };
-    await repository.clearAreas(pdf.id);
-    await repository.saveColumnPdf(updated);
+    const ok = await persist(async () => {
+      await repository.clearAreas(pdf.id);
+      await repository.saveColumnPdf(updated);
+    });
+    if (!ok) return;
     setPdfs((current) => current.map((item) => (item.id === pdf.id ? updated : item)));
   }
 
   async function deletePdf(pdf: ColumnPdf) {
-    await repository.deleteColumnPdf(pdf.id);
+    if (!(await persist(() => repository.deleteColumnPdf(pdf.id)))) return;
     setPdfs((current) => current.filter((item) => item.id !== pdf.id));
   }
 

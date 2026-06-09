@@ -270,7 +270,7 @@ export function PdfSetupModal({ column, pdf, rows, font, onClose, onSaved, onRes
   function resizeAreaToText(area: PdfArea) {
     const image = column.images?.[area.rowId];
     const width = image
-      ? measureImageAreaWidth(image.width, area.fontSize, size.width)
+      ? measureImageAreaWidth(area.fontSize, size.width)
       : measureAreaWidth(getAreaValue(area.rowId), area.fontSize, size.width);
     const height = image
       ? measureImageAreaHeight(image.width, image.height, width, size.width, size.height)
@@ -610,7 +610,7 @@ function measureAreaHeight(fontSize: number, pageHeight: number) {
   return clamp((fontSize * 1.55) / pageHeight, 0.001, 0.12);
 }
 
-function measureImageAreaWidth(imageWidth: number, fontSize: number, pageWidth: number) {
+function measureImageAreaWidth(fontSize: number, pageWidth: number) {
   const scaledWidth = DEFAULT_IMAGE_WIDTH * (fontSize / DEFAULT_FONT_SIZE);
   return clamp(scaledWidth / pageWidth, 0.02, 0.9);
 }
