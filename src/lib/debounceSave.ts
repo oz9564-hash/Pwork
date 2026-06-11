@@ -5,6 +5,9 @@
  * - schedule(key, value): 저장을 예약(기존 예약은 덮어씀)
  * - flush(key): 예약된 저장을 즉시 실행
  * - cancel(key): 예약을 취소(즉시 전체 문서를 쓰는 다른 경로가 최신 상태를 이미 반영할 때 사용)
+ * - bypass(keys, action): 해당 key들의 예약을 취소한 뒤 즉시 쓰기 action을 실행한다.
+ *   디바운스를 우회해 전체 문서를 쓰는 경로는 전부 이걸 거쳐야 한다.
+ *   (cancel 호출을 빼먹어 디바운스가 나중에 stale 값을 덮어쓰는 버그를 구조적으로 차단)
  * - flushAll(): 모든 예약을 즉시 실행(언마운트/페이지 종료 시)
  */
 export function createDebouncedSaver<T>(
@@ -50,9 +53,14 @@ export function createDebouncedSaver<T>(
     pending.delete(key);
   }
 
+  async function bypass<R>(keys: string | string[], action: () => Promise<R>): Promise<R> {
+    for (const key of Array.isArray(keys) ? keys : [keys]) cancel(key);
+    return action();
+  }
+
   async function flushAll() {
     await Promise.all([...timers.keys()].map((key) => flush(key)));
   }
 
-  return { schedule, flush, cancel, flushAll };
+  return { schedule, flush, cancel, bypass, flushAll };
 }

@@ -102,7 +102,8 @@ export function App() {
 
   // 텍스트 편집(셀 값/항목명/열 이름/PDF 행 이름)은 매 글자마다 전체 문서를 쓰지 않도록
   // 문서 단위로 디바운스한다. 즉시 전체 문서를 쓰는 다른 경로(삭제/이미지/붙여넣기 등)는
-  // 최신 로컬 상태를 이미 반영하므로 해당 key의 예약을 cancel해 stale write를 막는다.
+  // 최신 로컬 상태를 이미 반영하므로 반드시 saver.bypass(keys, action)로 감싸 쓴다.
+  // (bypass가 해당 key의 예약을 먼저 취소해 stale write를 구조적으로 막는다.)
   const notifySaveError = () =>
     setUploadNotice({
       tone: "error",
@@ -327,8 +328,7 @@ export function App() {
   }
 
   async function deletePdfRow(pdfRowId: string) {
-    pdfRowSaver.cancel(pdfRowId);
-    if (!(await persist(() => repository.deletePdfRow(pdfRowId)))) return;
+    if (!(await persist(() => pdfRowSaver.bypass(pdfRowId, () => repository.deletePdfRow(pdfRowId))))) return;
     setPdfRows((current) => current.filter((row) => row.id !== pdfRowId));
     setBaseAreas((current) => current.filter((area) => area.pdfRowId !== pdfRowId));
     setAdjusts((current) => current.filter((adjust) => adjust.pdfRowId !== pdfRowId));
@@ -358,18 +358,21 @@ export function App() {
     const changedRows = reorderedRows.filter((row, index) => row.createdAt !== rows[index]?.createdAt || row.id !== rows[index]?.id);
 
     setRows(reorderedRows);
-    // 재정렬 결과는 즉시 기록한다. 이 행들에 대해 디바운스 예약된 라벨 저장이
-    // 나중에 실행돼 createdAt(정렬 인덱스)을 되돌리지 않도록 예약을 취소한다.
-    changedRows.forEach((row) => rowSaver.cancel(row.id));
-    await persist(() => Promise.all(changedRows.map((row) => repository.saveRow(row))));
+    // 재정렬 결과는 즉시 기록한다. bypass가 이 행들의 디바운스 예약(라벨 저장)을 취소해
+    // 나중에 실행된 예약이 createdAt(정렬 인덱스)을 되돌리는 것을 막는다.
+    await persist(() =>
+      rowSaver.bypass(
+        changedRows.map((row) => row.id),
+        () => Promise.all(changedRows.map((row) => repository.saveRow(row))),
+      ),
+    );
   }
 
   async function deleteRow(rowId: string) {
-    // 삭제될 행의 라벨 저장 예약은 버리고, 셀 값 편집 예약은 먼저 반영한 뒤 삭제한다.
+    // 삭제될 행의 라벨 저장 예약은 버리고(bypass), 셀 값 편집 예약은 먼저 반영한 뒤 삭제한다.
     // (repository.deleteRow가 각 열에서 이 행의 값을 제거하므로 순서가 중요하다.)
-    rowSaver.cancel(rowId);
     await columnSaver.flushAll();
-    if (!(await persist(() => repository.deleteRow(rowId)))) return;
+    if (!(await persist(() => rowSaver.bypass(rowId, () => repository.deleteRow(rowId))))) return;
     setSheetSelection((current) =>
       current?.anchor.rowId === rowId || current?.focus.rowId === rowId ? undefined : current,
     );
@@ -551,13 +554,19 @@ export function App() {
     const columnsToSave = nextColumns.filter(
       (column) => changedColumnIds.has(column.id) || !existingColumnIds.has(column.id),
     );
-    // 붙여넣기로 즉시 기록하는 행/열은 디바운스 예약을 취소해 나중에 stale write가 끼어들지 않게 한다.
-    rowsToSave.forEach((row) => rowSaver.cancel(row.id));
-    columnsToSave.forEach((column) => columnSaver.cancel(column.id));
-    await Promise.all([
-      ...rowsToSave.map((row) => repository.saveRow(row)),
-      ...columnsToSave.map((column) => repository.saveColumn(column)),
-    ]);
+    // 붙여넣기로 즉시 기록하는 행/열은 bypass로 디바운스 예약을 걷어내 stale write를 막는다.
+    await rowSaver.bypass(
+      rowsToSave.map((row) => row.id),
+      () =>
+        columnSaver.bypass(
+          columnsToSave.map((column) => column.id),
+          () =>
+            Promise.all([
+              ...rowsToSave.map((row) => repository.saveRow(row)),
+              ...columnsToSave.map((column) => repository.saveColumn(column)),
+            ]),
+        ),
+    );
   }
 
   function handleSheetPaste(event: ClipboardEvent<HTMLInputElement>, rowId: string, columnId?: string) {
@@ -667,17 +676,18 @@ export function App() {
     });
 
     try {
-      // 이 열에 디바운스 예약된 텍스트 저장이 이미지 저장 뒤 실행돼 이미지를 덮어쓰지 않도록
-      // 예약을 취소한다. (saveCellImage는 최신 상태의 column으로 전체 문서를 쓴다.)
-      columnSaver.cancel(column.id);
       const optimized = await optimizeImageFile(file);
-      const changed = await repository.saveCellImage(column, rowId, optimized.file, {
-        name: optimized.name,
-        contentType: optimized.contentType,
-        width: optimized.width,
-        height: optimized.height,
-        updatedAt: Date.now(),
-      });
+      // saveCellImage는 최신 상태의 column으로 전체 문서를 쓰므로, bypass로 이 열의
+      // 디바운스 예약(텍스트 저장)이 나중에 실행돼 이미지를 덮어쓰는 것을 막는다.
+      const changed = await columnSaver.bypass(column.id, () =>
+        repository.saveCellImage(column, rowId, optimized.file, {
+          name: optimized.name,
+          contentType: optimized.contentType,
+          width: optimized.width,
+          height: optimized.height,
+          updatedAt: Date.now(),
+        }),
+      );
       setColumns((current) => current.map((item) => (item.id === column.id ? changed : item)));
       setUploadNotice({
         tone: "success",
@@ -697,11 +707,12 @@ export function App() {
   }
 
   async function clearCellImage(column: ValueColumn, rowId: string) {
-    columnSaver.cancel(column.id);
     let changed: ValueColumn | undefined;
-    const ok = await persist(async () => {
-      changed = await repository.clearCellImage(column, rowId);
-    });
+    const ok = await persist(() =>
+      columnSaver.bypass(column.id, async () => {
+        changed = await repository.clearCellImage(column, rowId);
+      }),
+    );
     if (!ok || !changed) return;
     const next = changed;
     setColumns((current) => current.map((item) => (item.id === column.id ? next : item)));
@@ -720,9 +731,8 @@ export function App() {
   }
 
   async function deleteColumn(columnId: string) {
-    // 삭제되는 열의 디바운스 저장이 삭제 후 실행돼 문서를 되살리지 않도록 예약을 취소한다.
-    columnSaver.cancel(columnId);
-    if (!(await persist(() => repository.deleteColumn(columnId)))) return;
+    // 삭제되는 열의 디바운스 저장이 삭제 후 실행돼 문서를 되살리지 않도록 bypass로 지운다.
+    if (!(await persist(() => columnSaver.bypass(columnId, () => repository.deleteColumn(columnId))))) return;
     setSheetSelection((current) =>
       current?.anchor.columnId === columnId || current?.focus.columnId === columnId ? undefined : current,
     );
@@ -748,9 +758,9 @@ export function App() {
     });
 
     try {
-      pdfRowSaver.cancel(pdfRow.id);
       const pdf: CommonPdf = { name: file.name, updatedAt: Date.now() };
-      const nextRow = await repository.saveCommonPdf(pdfRow, file, pdf);
+      // saveCommonPdf는 행 문서 전체를 쓰므로 bypass로 이 행의 라벨 저장 예약을 걷어낸다.
+      const nextRow = await pdfRowSaver.bypass(pdfRow.id, () => repository.saveCommonPdf(pdfRow, file, pdf));
       setPdfRows((current) => current.map((row) => (row.id === pdfRow.id ? nextRow : row)));
       setUploadNotice({
         tone: "success",
@@ -804,7 +814,33 @@ export function App() {
     setFont(undefined);
   }
 
-  /** 한 (열 × PDF행) 결과 PDF를 생성한다. 공통 파일 + 기준 영역 + 이 열의 보정으로 채운다. */
+  /**
+   * 한 (열 × PDF행) 결과 PDF를 만들어 내려받는다. 공통 파일·셀 이미지를 받아
+   * 기준 영역 + 이 열의 보정으로 채운다. 단건/일괄 다운로드가 공유하는 단일 경로.
+   */
+  async function exportColumnPdf(column: ValueColumn, pdfRow: PdfSlotRow, areas: PdfArea[]) {
+    if (!pdfRow.pdf) return;
+    const file = await repository.getCommonPdfFile(pdfRow.id);
+    const imageEntries = await Promise.all(
+      areas
+        .filter((area) => column.images?.[area.rowId])
+        .map(async (area) => {
+          const image = column.images?.[area.rowId];
+          return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
+        }),
+    );
+    await exportPdf({
+      file,
+      fileName: pdfRow.pdf.name,
+      rows,
+      column,
+      areas,
+      adjust: findAdjust(column.id, pdfRow.id),
+      fontAsset: font,
+      imageFiles: Object.fromEntries(imageEntries),
+    });
+  }
+
   async function downloadFilledPdf(column: ValueColumn, pdfRow: PdfSlotRow) {
     if (!pdfRow.pdf) return;
     const areas = areasForPdfRow(pdfRow.id);
@@ -812,25 +848,7 @@ export function App() {
 
     setBusyId(`${column.id}:${pdfRow.id}`);
     try {
-      const file = await repository.getCommonPdfFile(pdfRow.id);
-      const imageEntries = await Promise.all(
-        areas
-          .filter((area) => column.images?.[area.rowId])
-          .map(async (area) => {
-            const image = column.images?.[area.rowId];
-            return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
-          }),
-      );
-      await exportPdf({
-        file,
-        fileName: pdfRow.pdf.name,
-        rows,
-        column,
-        areas,
-        adjust: findAdjust(column.id, pdfRow.id),
-        fontAsset: font,
-        imageFiles: Object.fromEntries(imageEntries),
-      });
+      await exportColumnPdf(column, pdfRow, areas);
     } catch (error) {
       console.error("[pdf-download] failed", error);
       setUploadNotice({
@@ -855,26 +873,7 @@ export function App() {
     });
     try {
       for (const pdfRow of targets) {
-        const areas = areasForPdfRow(pdfRow.id);
-        const file = await repository.getCommonPdfFile(pdfRow.id);
-        const imageEntries = await Promise.all(
-          areas
-            .filter((area) => column.images?.[area.rowId])
-            .map(async (area) => {
-              const image = column.images?.[area.rowId];
-              return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
-            }),
-        );
-        await exportPdf({
-          file,
-          fileName: pdfRow.pdf!.name,
-          rows,
-          column,
-          areas,
-          adjust: findAdjust(column.id, pdfRow.id),
-          fontAsset: font,
-          imageFiles: Object.fromEntries(imageEntries),
-        });
+        await exportColumnPdf(column, pdfRow, areasForPdfRow(pdfRow.id));
       }
     } catch (error) {
       console.error("[pdf-column-download] failed", error);
