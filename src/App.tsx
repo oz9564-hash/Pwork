@@ -1,22 +1,12 @@
-﻿import { Fragment, useEffect, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent, DragEvent } from "react";
+﻿import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, ClipboardEvent } from "react";
 import type { User } from "firebase/auth";
-import {
-  Copy,
-  FileDown,
-  FileText,
-  Loader2,
-  LogOut,
-  Plus,
-  GripVertical,
-  Pencil,
-  SlidersHorizontal,
-  Trash2,
-  Upload,
-  X,
-} from "lucide-react";
-import { CellImageControl } from "./components/CellImageControl";
+import { FileText, LogOut } from "lucide-react";
 import { PdfSetupModal } from "./components/PdfSetupModal";
+import { PdfMappingSection } from "./components/PdfMappingSection";
+import { SheetGrid } from "./components/SheetGrid";
+import { StatusOverlays } from "./components/StatusOverlays";
+import type { BusyFeedback, CellImagePreview, UploadNotice } from "./components/StatusOverlays";
 import { useSheetSelection } from "./hooks/useSheetSelection";
 import { createId } from "./lib/ids";
 import { createDebouncedSaver } from "./lib/debounceSave";
@@ -30,22 +20,6 @@ import type { ColumnPdfAdjust, CommonPdf, FieldRow, FontAsset, PdfArea, PdfSlotR
 type ActiveSetup = {
   pdfRow: PdfSlotRow;
   column?: ValueColumn;
-};
-
-type BusyFeedback = {
-  title: string;
-  description: string;
-};
-
-type CellImagePreview = {
-  name: string;
-  url: string;
-};
-
-type UploadNotice = {
-  tone: "success" | "error";
-  title: string;
-  description: string;
 };
 
 const initialRows = ["이름", "비밀번호"];
@@ -83,9 +57,7 @@ export function App() {
   const [busyFeedback, setBusyFeedback] = useState<BusyFeedback>();
   const [sheetZoom, setSheetZoom] = useState(1);
   const [imagePreview, setImagePreview] = useState<CellImagePreview>();
-  const [pdfDropTarget, setPdfDropTarget] = useState<string>();
   const [uploadNotice, setUploadNotice] = useState<UploadNotice>();
-  const [draggingRowId, setDraggingRowId] = useState<string>();
   // undefined = 인증 확인 중, null = 로그아웃 상태, User = 로그인됨
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
@@ -671,24 +643,6 @@ export function App() {
     }
   }
 
-  function handlePdfDragOver(event: DragEvent, pdfRowId: string) {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    setPdfDropTarget(pdfRowId);
-  }
-
-  function handlePdfDragLeave(event: DragEvent) {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-    setPdfDropTarget(undefined);
-  }
-
-  function handlePdfDrop(event: DragEvent, pdfRow: PdfSlotRow) {
-    event.preventDefault();
-    event.stopPropagation();
-    setPdfDropTarget(undefined);
-    void uploadCommonPdf(pdfRow, event.dataTransfer.files[0]);
-  }
-
   async function uploadFont(file: File | undefined) {
     if (!file) return;
     const nextFont: FontAsset = {
@@ -867,259 +821,42 @@ export function App() {
                 .join(" ")} minmax(${Math.round(160 * sheetZoom)}px, 1fr)`,
             }}
           >
-            <div className="sheetCell sheetHead stickyCol">항목</div>
-            {columns.map((column) => (
-              <div className="sheetCell sheetHead columnHead" key={column.id}>
-                <input
-                  value={column.name}
-                  aria-label="열 이름"
-                  onChange={(event) => void updateColumnName(column.id, event.target.value)}
-                />
-                <div className="columnTools">
-                  <button
-                    type="button"
-                    title="열 복사"
-                    disabled={busyId === column.id}
-                    onClick={() => void duplicateColumn(column)}
-                  >
-                    <Copy size={15} />
-                  </button>
-                  <button type="button" title="열 삭제" onClick={() => void deleteColumn(column.id)}>
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-                <div
-                  className="columnResizeHandle"
-                  role="separator"
-                  aria-label="열 너비 조절"
-                  onPointerDown={(event) => {
-                    resizeRef.current = {
-                      columnId: column.id,
-                      startX: event.clientX,
-                      startWidth: getColumnWidth(column.id),
-                    };
-                  }}
-                />
-              </div>
-            ))}
-            <div className="sheetCell sheetHead addColumnCell">
-              <button className="addSheetButton" type="button" onClick={() => void addColumn()}>
-                <Plus size={16} />열 추가
-              </button>
-            </div>
+            <SheetGrid
+              rows={rows}
+              columns={columns}
+              busyId={busyId}
+              selection={selection}
+              onUpdateColumnName={updateColumnName}
+              onDuplicateColumn={(column) => void duplicateColumn(column)}
+              onDeleteColumn={(columnId) => void deleteColumn(columnId)}
+              onAddColumn={() => void addColumn()}
+              onAddRow={() => void addRow()}
+              onUpdateRow={updateRow}
+              onDeleteRow={(rowId) => void deleteRow(rowId)}
+              onMoveRow={(draggedRowId, targetRowId) => void moveRow(draggedRowId, targetRowId)}
+              onUpdateCell={updateCell}
+              onPaste={handleSheetPaste}
+              onUploadCellImage={(column, rowId, file) => void uploadCellImage(column, rowId, file)}
+              onPreviewCellImage={(column, rowId) => void openCellImagePreview(column, rowId)}
+              onClearCellImage={(column, rowId) => void clearCellImage(column, rowId)}
+              onColumnResizeStart={(columnId, clientX) => {
+                resizeRef.current = { columnId, startX: clientX, startWidth: getColumnWidth(columnId) };
+              }}
+            />
 
-            {rows.map((row) => (
-              <Fragment key={row.id}>
-                <div
-                  className={`${selection.getCellClass(row.id)} rowLabel stickyCol${draggingRowId === row.id ? " draggingRow" : ""}`}
-                  key={`${row.id}-label`}
-                  onPointerDown={(event) => {
-                    if (event.button !== 0) return;
-                    selection.select({ rowId: row.id });
-                  }}
-                  onPointerEnter={() => selection.extend({ rowId: row.id })}
-                  onDragOver={(event) => {
-                    if (!draggingRowId) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const sourceRowId = event.dataTransfer.getData("text/plain") || draggingRowId;
-                    setDraggingRowId(undefined);
-                    if (sourceRowId) void moveRow(sourceRowId, row.id);
-                  }}
-                >
-                  <button
-                    className="rowDragHandle"
-                    type="button"
-                    draggable
-                    title="행 위치 이동"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onDragStart={(event) => {
-                      setDraggingRowId(row.id);
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", row.id);
-                    }}
-                    onDragEnd={() => setDraggingRowId(undefined)}
-                  >
-                    <GripVertical size={14} />
-                  </button>
-                  <input
-                    value={row.label}
-                    aria-label="항목명"
-                    placeholder="항목"
-                    onFocus={() => selection.focus({ rowId: row.id })}
-                    onPaste={(event) => handleSheetPaste(event, row.id)}
-                    onChange={(event) => void updateRow(row.id, event.target.value)}
-                  />
-                  <button type="button" title="항목 삭제" onClick={() => void deleteRow(row.id)}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                {columns.map((column) => {
-                  const image = column.images?.[row.id];
-                  return (
-                    <div
-                      className={`${selection.getCellClass(row.id, column.id)} valueCell`}
-                      key={`${row.id}-${column.id}`}
-                      onPointerDown={(event) => {
-                        if (event.button !== 0) return;
-                        selection.select({ rowId: row.id, columnId: column.id });
-                      }}
-                      onPointerEnter={() => selection.extend({ rowId: row.id, columnId: column.id })}
-                    >
-                      <div className={image ? "cellValueWrap hasImage" : "cellValueWrap"}>
-                        {image ? null : (
-                          <input
-                            className="cellTextInput"
-                            value={column.values[row.id] ?? ""}
-                            aria-label={`${column.name} ${row.label}`}
-                            placeholder="값 입력"
-                            onFocus={() => selection.focus({ rowId: row.id, columnId: column.id })}
-                            onPaste={(event) => handleSheetPaste(event, row.id, column.id)}
-                            onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
-                          />
-                        )}
-                        <CellImageControl
-                          image={image}
-                          onSelect={(file) => uploadCellImage(column, row.id, file)}
-                          onPreview={() => openCellImagePreview(column, row.id)}
-                          onClear={() => clearCellImage(column, row.id)}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="sheetCell emptyAddColumnCell" />
-              </Fragment>
-            ))}
-
-            <div className="sheetCell addRowLabel stickyCol">
-              <button className="addSheetButton" type="button" onClick={() => void addRow()}>
-                <Plus size={16} />항목 추가
-              </button>
-            </div>
-            {columns.map((column) => (
-              <div className="sheetCell addRowCell" key={`${column.id}-add-row`} />
-            ))}
-            <div className="sheetCell emptyAddColumnCell" />
-
-            <div className="sheetCell sectionLabelCell stickyCol">
-              <span className="sectionBandLabel">
-                <FileText size={14} />
-                PDF 매핑
-              </span>
-            </div>
-            {columns.map((column) => (
-              <div className="sheetCell sectionDownloadCell" key={`${column.id}-pdf-bulk-download`}>
-                <button
-                  className="columnDownloadButton"
-                  type="button"
-                  disabled={busyId === column.id}
-                  onClick={() => void downloadPdfColumn(column)}
-                >
-                  {column.name} 일괄 다운로드
-                </button>
-              </div>
-            ))}
-            <div className="sheetCell sectionDownloadCell" />
-
-            {pdfRows.map((pdfRow) => {
-              const hasAreas = areasForPdfRow(pdfRow.id).length > 0;
-              return (
-                <Fragment key={pdfRow.id}>
-                  <div className="sheetCell rowLabel stickyCol pdfRowLabel">
-                    <div className="pdfRowLabelTop">
-                      <input
-                        value={pdfRow.label}
-                        aria-label="PDF 행 이름"
-                        placeholder="PDF"
-                        onChange={(event) => void updatePdfRow(pdfRow.id, event.target.value)}
-                      />
-                      <button type="button" title="PDF 행 삭제" onClick={() => void deletePdfRow(pdfRow.id)}>
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                    {pdfRow.pdf ? (
-                      <div className="pdfRowCommon">
-                        <span className="pdfRowFileName" title={pdfRow.pdf.name}>
-                          <FileText size={13} />
-                          {pdfRow.pdf.name}
-                        </span>
-                        <div className="pdfRowCommonActions">
-                          <button type="button" onClick={() => setActiveSetup({ pdfRow })}>
-                            <Pencil size={13} />
-                            기준 영역
-                          </button>
-                          <label className="pdfReplaceButton" title="PDF 교체">
-                            <Upload size={13} />
-                            교체
-                            <input
-                              type="file"
-                              accept="application/pdf"
-                              onChange={(event) => void uploadCommonPdf(pdfRow, event.target.files?.[0])}
-                            />
-                          </label>
-                        </div>
-                      </div>
-                    ) : (
-                      <label
-                        className={pdfDropTarget === pdfRow.id ? "pdfUploadSlot dragging" : "pdfUploadSlot"}
-                        onDragOver={(event) => handlePdfDragOver(event, pdfRow.id)}
-                        onDragEnter={(event) => handlePdfDragOver(event, pdfRow.id)}
-                        onDragLeave={handlePdfDragLeave}
-                        onDrop={(event) => handlePdfDrop(event, pdfRow)}
-                      >
-                        <Upload size={15} />
-                        <span>PDF 드롭</span>
-                        <small>또는 클릭</small>
-                        <input
-                          type="file"
-                          accept="application/pdf"
-                          onChange={(event) => void uploadCommonPdf(pdfRow, event.target.files?.[0])}
-                        />
-                      </label>
-                    )}
-                  </div>
-                  {columns.map((column) => (
-                    <div className="sheetCell pdfSlotCell" key={`${pdfRow.id}-${column.id}`}>
-                      {!pdfRow.pdf ? (
-                        <span className="pdfSlotHint">왼쪽에 PDF를 올리세요</span>
-                      ) : !hasAreas ? (
-                        <span className="pdfSlotHint">왼쪽에서 기준 영역을 먼저 잡으세요</span>
-                      ) : (
-                        <div className="pdfColumnActions">
-                          <button type="button" onClick={() => setActiveSetup({ pdfRow, column })}>
-                            <SlidersHorizontal size={14} />
-                            미세조정
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busyId === `${column.id}:${pdfRow.id}`}
-                            onClick={() => void downloadFilledPdf(column, pdfRow)}
-                          >
-                            <FileDown size={14} />
-                            다운로드
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <div className="sheetCell emptyAddColumnCell" />
-                </Fragment>
-              );
-            })}
-
-            <div className="sheetCell addRowLabel stickyCol">
-              <button className="addSheetButton" type="button" onClick={() => void addPdfRow()}>
-                <Plus size={16} />PDF 행 추가
-              </button>
-            </div>
-            {columns.map((column) => (
-              <div className="sheetCell addRowCell" key={`${column.id}-add-pdf-row`} />
-            ))}
-            <div className="sheetCell emptyAddColumnCell" />
+            <PdfMappingSection
+              columns={columns}
+              pdfRows={pdfRows}
+              busyId={busyId}
+              hasAreas={(pdfRowId) => areasForPdfRow(pdfRowId).length > 0}
+              onUpdatePdfRow={updatePdfRow}
+              onDeletePdfRow={(pdfRowId) => void deletePdfRow(pdfRowId)}
+              onAddPdfRow={() => void addPdfRow()}
+              onUploadPdf={(pdfRow, file) => void uploadCommonPdf(pdfRow, file)}
+              onOpenSetup={(pdfRow, column) => setActiveSetup({ pdfRow, column })}
+              onDownloadOne={(column, pdfRow) => void downloadFilledPdf(column, pdfRow)}
+              onDownloadColumn={(column) => void downloadPdfColumn(column)}
+            />
           </div>
         </section>
       )}
@@ -1134,36 +871,12 @@ export function App() {
           onSaved={() => void reloadPdfData()}
         />
       ) : null}
-      {imagePreview ? (
-        <div className="modalBackdrop imagePreviewBackdrop" role="dialog" aria-modal="true" aria-label={imagePreview.name}>
-          <div className="imagePreviewModal">
-            <header className="imagePreviewHeader">
-              <strong>{imagePreview.name}</strong>
-              <button className="iconButton" type="button" title="닫기" onClick={closeCellImagePreview}>
-                <X size={18} />
-              </button>
-            </header>
-            <div className="imagePreviewBody">
-              <img src={imagePreview.url} alt={imagePreview.name} />
-            </div>
-          </div>
-        </div>
-      ) : null}
-      {busyFeedback ? (
-        <div className="downloadOverlay" role="status" aria-live="polite">
-          <div className="downloadDialog">
-            <Loader2 className="spinIcon" size={28} />
-            <strong>{busyFeedback.title}</strong>
-            <span>{busyFeedback.description}</span>
-          </div>
-        </div>
-      ) : null}
-      {uploadNotice ? (
-        <div className={`uploadToast ${uploadNotice.tone}`} role="status" aria-live="polite">
-          <strong>{uploadNotice.title}</strong>
-          <span>{uploadNotice.description}</span>
-        </div>
-      ) : null}
+      <StatusOverlays
+        busyFeedback={busyFeedback}
+        uploadNotice={uploadNotice}
+        imagePreview={imagePreview}
+        onCloseImagePreview={closeCellImagePreview}
+      />
     </main>
   );
 }
