@@ -1316,12 +1316,14 @@ button:disabled {
   align-items: flex-start;
   min-width: 18px;
   min-height: 14px;
-  border: 1.5px solid rgb(239 68 68 / 0.85);
+  /* 테두리는 outline으로(레이아웃에 영향 없음) + padding 0 → 글자가 박스 왼쪽 끝에서 시작.
+     이래야 패딩/테두리 인셋 없이 출력(drawText의 박스 좌상단)과 시작 위치가 일치한다. */
+  outline: 1.5px solid rgb(239 68 68 / 0.85);
   border-radius: 4px;
   background: rgb(254 242 242 / 0.45);
   color: #991b1b;
-  padding: 1px 4px;
-  font-family: "LocalBatang", Batang, serif;
+  padding: 0;
+  font-family: "ActivePdfFont", "LocalBatang", serif;
   font-weight: var(--fw-medium);
   /* 렌더러의 LINE_HEIGHT(1.35)와 맞춰 여러 줄이 겹치지 않고 출력과 비슷하게 보이도록. */
   line-height: 1.35;
@@ -1364,7 +1366,7 @@ button:disabled {
 }
 
 .mappedArea.selected {
-  border-color: var(--primary);
+  outline-color: var(--primary);
   background: rgb(239 246 255 / 0.86);
   color: var(--primary-hover);
 }

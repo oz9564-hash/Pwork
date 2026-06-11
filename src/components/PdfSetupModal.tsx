@@ -18,7 +18,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 /** PDF 원본 대비 화면에 렌더링하는 배율. */
 const DISPLAY_SCALE = 1.35;
 const DEFAULT_FONT_SIZE = 11;
-const AREA_FONT_FAMILY = "LocalBatang, Batang, serif";
+/** 오버레이/측정용 폰트. 출력과 같은 폰트(ActivePdfFont)를 우선 써서 미리보기 = 수정 화면을 맞춘다. */
+const AREA_FONT_FAMILY = '"ActivePdfFont", "LocalBatang", serif';
+/** 오버레이에서 출력 폰트를 로드해 등록하는 font-family 이름. */
+const ACTIVE_FONT_FAMILY = "ActivePdfFont";
 
 type DragState = {
   id: string;
@@ -346,6 +349,39 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [column]);
+
+  // 오버레이 텍스트를 출력과 "같은 폰트"로 그린다. (업로드 폰트 우선, 없으면 기본 human-myeongjo)
+  // 폰트가 같아야 글자 폭·줄바꿈 위치가 미리보기(실제 출력)와 일치한다.
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | undefined;
+    let face: FontFace | undefined;
+
+    async function loadActiveFont() {
+      try {
+        let src: string;
+        if (font) {
+          objectUrl = URL.createObjectURL(font.file);
+          src = `url(${objectUrl})`;
+        } else {
+          src = `url(${import.meta.env.BASE_URL}fonts/human-myeongjo.ttf)`;
+        }
+        face = new FontFace(ACTIVE_FONT_FAMILY, src);
+        await face.load();
+        if (cancelled) return;
+        document.fonts.add(face);
+      } catch (error) {
+        console.error("[pdf-overlay] active font load failed", error);
+      }
+    }
+
+    void loadActiveFont();
+    return () => {
+      cancelled = true;
+      if (face) document.fonts.delete(face);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [font]);
 
   /**
    * base 모드: 항목 라벨(위치를 잡아야 하므로 비어 있으면 "항목"으로 표시).
