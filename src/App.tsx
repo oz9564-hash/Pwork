@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { CellImageControl } from "./components/CellImageControl";
 import { PdfSetupModal } from "./components/PdfSetupModal";
+import { useSheetSelection } from "./hooks/useSheetSelection";
 import { createId } from "./lib/ids";
 import { createDebouncedSaver } from "./lib/debounceSave";
 import { optimizeImageFile } from "./lib/imageOptimize";
@@ -47,16 +48,6 @@ type UploadNotice = {
   description: string;
 };
 
-type SheetCellPoint = {
-  rowId: string;
-  columnId?: string;
-};
-
-type SheetSelection = {
-  anchor: SheetCellPoint;
-  focus: SheetCellPoint;
-};
-
 const initialRows = ["이름", "비밀번호"];
 const MIN_SHEET_ZOOM = 0.75;
 const MAX_SHEET_ZOOM = 1.8;
@@ -77,10 +68,10 @@ function isMultiCellPaste(cells: string[][]) {
 
 export function App() {
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
-  const selectingRef = useRef(false);
   const sheetWrapRef = useRef<HTMLElement | null>(null);
   const [rows, setRows] = useState<FieldRow[]>([]);
   const [columns, setColumns] = useState<ValueColumn[]>([]);
+  const selection = useSheetSelection(rows, columns);
   const [pdfRows, setPdfRows] = useState<PdfSlotRow[]>([]);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   // 기준 영역(모든 열 공유) + 열별 보정. PDF 파일은 PDF 행에 1장씩(pdfRow.pdf).
@@ -90,7 +81,6 @@ export function App() {
   const [activeSetup, setActiveSetup] = useState<ActiveSetup>();
   const [busyId, setBusyId] = useState<string>();
   const [busyFeedback, setBusyFeedback] = useState<BusyFeedback>();
-  const [sheetSelection, setSheetSelection] = useState<SheetSelection>();
   const [sheetZoom, setSheetZoom] = useState(1);
   const [imagePreview, setImagePreview] = useState<CellImagePreview>();
   const [pdfDropTarget, setPdfDropTarget] = useState<string>();
@@ -173,7 +163,7 @@ export function App() {
     setBaseAreas([]);
     setAdjusts([]);
     setFont(undefined);
-    setSheetSelection(undefined);
+    selection.clear();
   }, [user]);
 
   async function handleSignIn() {
@@ -202,7 +192,6 @@ export function App() {
 
     function onPointerUp() {
       resizeRef.current = null;
-      selectingRef.current = false;
     }
 
     window.addEventListener("pointermove", onPointerMove);
@@ -248,7 +237,7 @@ export function App() {
     setBaseAreas(storedAreas);
     setAdjusts(storedAdjusts);
     setFont(storedFont);
-    setSheetSelection(undefined);
+    selection.clear();
   }
 
   /** 기준 영역/보정을 다시 불러온다. 세팅·미세조정 모달 저장 후 호출. */
@@ -373,9 +362,7 @@ export function App() {
     // (repository.deleteRow가 각 열에서 이 행의 값을 제거하므로 순서가 중요하다.)
     await columnSaver.flushAll();
     if (!(await persist(() => rowSaver.bypass(rowId, () => repository.deleteRow(rowId))))) return;
-    setSheetSelection((current) =>
-      current?.anchor.rowId === rowId || current?.focus.rowId === rowId ? undefined : current,
-    );
+    selection.clearIfRow(rowId);
     setRows((current) => current.filter((row) => row.id !== rowId));
     setColumns((current) =>
       current.map((column) => {
@@ -540,16 +527,16 @@ export function App() {
 
     setRows(nextRows);
     setColumns(nextColumns);
-    setSheetSelection({
-      anchor: {
+    selection.setRange(
+      {
         rowId: nextRows[startRowIndex].id,
         columnId: labelPaste ? undefined : nextColumns[startColumnIndex]?.id,
       },
-      focus: {
+      {
         rowId: nextRows[targetRowCount - 1].id,
         columnId: targetColumnCount > 0 ? nextColumns[targetColumnCount - 1]?.id : undefined,
       },
-    });
+    );
     const rowsToSave = nextRows.filter((row) => changedRows.has(row.id) || !existingRowIds.has(row.id));
     const columnsToSave = nextColumns.filter(
       (column) => changedColumnIds.has(column.id) || !existingColumnIds.has(column.id),
@@ -574,99 +561,6 @@ export function App() {
     if (!isMultiCellPaste(cells)) return;
     event.preventDefault();
     void pasteSheetCells(rowId, columnId, cells);
-  }
-
-  function selectSheetCell(point: SheetCellPoint) {
-    selectingRef.current = true;
-    setSheetSelection({ anchor: point, focus: point });
-  }
-
-  function focusSheetCell(point: SheetCellPoint) {
-    if (selectingRef.current) return;
-    setSheetSelection({ anchor: point, focus: point });
-  }
-
-  function extendSheetSelection(point: SheetCellPoint) {
-    if (!selectingRef.current) return;
-    setSheetSelection((current) => (current ? { ...current, focus: point } : { anchor: point, focus: point }));
-  }
-
-  function getSheetPointIndexes(point: SheetCellPoint) {
-    return {
-      rowIndex: rows.findIndex((row) => row.id === point.rowId),
-      columnIndex: point.columnId ? columns.findIndex((column) => column.id === point.columnId) : -1,
-    };
-  }
-
-  function getSheetSelectionBounds() {
-    if (!sheetSelection) return undefined;
-
-    const anchor = getSheetPointIndexes(sheetSelection.anchor);
-    const focus = getSheetPointIndexes(sheetSelection.focus);
-    if (
-      anchor.rowIndex < 0 ||
-      focus.rowIndex < 0 ||
-      (sheetSelection.anchor.columnId && anchor.columnIndex < 0) ||
-      (sheetSelection.focus.columnId && focus.columnIndex < 0)
-    ) {
-      return undefined;
-    }
-
-    return {
-      minRow: Math.min(anchor.rowIndex, focus.rowIndex),
-      maxRow: Math.max(anchor.rowIndex, focus.rowIndex),
-      minColumn: Math.min(anchor.columnIndex, focus.columnIndex),
-      maxColumn: Math.max(anchor.columnIndex, focus.columnIndex),
-    };
-  }
-
-  function getSheetCellCopyValue(row: FieldRow, columnIndex: number) {
-    if (columnIndex < 0) return row.label;
-    const column = columns[columnIndex];
-    if (!column) return "";
-    return column.images?.[row.id]?.name ?? column.values[row.id] ?? "";
-  }
-
-  function handleSheetCopy(event: ClipboardEvent<HTMLElement>) {
-    const bounds = getSheetSelectionBounds();
-    if (!bounds) return;
-
-    const text = rows
-      .slice(bounds.minRow, bounds.maxRow + 1)
-      .map((row) => {
-        const values: string[] = [];
-        for (let columnIndex = bounds.minColumn; columnIndex <= bounds.maxColumn; columnIndex += 1) {
-          values.push(getSheetCellCopyValue(row, columnIndex));
-        }
-        return values.join("\t");
-      })
-      .join("\n");
-
-    event.preventDefault();
-    event.clipboardData.setData("text/plain", text);
-  }
-
-  function getSheetCellClass(rowId: string, columnId?: string) {
-    const classes = ["sheetCell"];
-    if (!sheetSelection) return classes.join(" ");
-
-    const cellRowIndex = rows.findIndex((row) => row.id === rowId);
-    const cellColumnIndex = columnId ? columns.findIndex((column) => column.id === columnId) : -1;
-    const bounds = getSheetSelectionBounds();
-    if (cellRowIndex < 0 || (columnId && cellColumnIndex < 0) || !bounds) {
-      return classes.join(" ");
-    }
-
-    const selected =
-      cellRowIndex >= bounds.minRow &&
-      cellRowIndex <= bounds.maxRow &&
-      cellColumnIndex >= bounds.minColumn &&
-      cellColumnIndex <= bounds.maxColumn;
-    const active = sheetSelection.anchor.rowId === rowId && sheetSelection.anchor.columnId === columnId;
-
-    if (selected) classes.push("selectedSheetCell");
-    if (active) classes.push("activeSheetCell");
-    return classes.join(" ");
   }
 
   async function uploadCellImage(column: ValueColumn, rowId: string, file: File) {
@@ -733,9 +627,7 @@ export function App() {
   async function deleteColumn(columnId: string) {
     // 삭제되는 열의 디바운스 저장이 삭제 후 실행돼 문서를 되살리지 않도록 bypass로 지운다.
     if (!(await persist(() => columnSaver.bypass(columnId, () => repository.deleteColumn(columnId))))) return;
-    setSheetSelection((current) =>
-      current?.anchor.columnId === columnId || current?.focus.columnId === columnId ? undefined : current,
-    );
+    selection.clearIfColumn(columnId);
     setColumns((current) => current.filter((column) => column.id !== columnId));
     setAdjusts((current) => current.filter((adjust) => adjust.columnId !== columnId));
   }
@@ -964,7 +856,7 @@ export function App() {
         <section
           ref={sheetWrapRef}
           className="sheetWrap"
-          onCopyCapture={handleSheetCopy}
+          onCopyCapture={selection.handleCopy}
           style={{ "--sheet-zoom": sheetZoom } as CSSProperties}
         >
           <div
@@ -1019,13 +911,13 @@ export function App() {
             {rows.map((row) => (
               <Fragment key={row.id}>
                 <div
-                  className={`${getSheetCellClass(row.id)} rowLabel stickyCol${draggingRowId === row.id ? " draggingRow" : ""}`}
+                  className={`${selection.getCellClass(row.id)} rowLabel stickyCol${draggingRowId === row.id ? " draggingRow" : ""}`}
                   key={`${row.id}-label`}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return;
-                    selectSheetCell({ rowId: row.id });
+                    selection.select({ rowId: row.id });
                   }}
-                  onPointerEnter={() => extendSheetSelection({ rowId: row.id })}
+                  onPointerEnter={() => selection.extend({ rowId: row.id })}
                   onDragOver={(event) => {
                     if (!draggingRowId) return;
                     event.preventDefault();
@@ -1057,7 +949,7 @@ export function App() {
                     value={row.label}
                     aria-label="항목명"
                     placeholder="항목"
-                    onFocus={() => focusSheetCell({ rowId: row.id })}
+                    onFocus={() => selection.focus({ rowId: row.id })}
                     onPaste={(event) => handleSheetPaste(event, row.id)}
                     onChange={(event) => void updateRow(row.id, event.target.value)}
                   />
@@ -1069,13 +961,13 @@ export function App() {
                   const image = column.images?.[row.id];
                   return (
                     <div
-                      className={`${getSheetCellClass(row.id, column.id)} valueCell`}
+                      className={`${selection.getCellClass(row.id, column.id)} valueCell`}
                       key={`${row.id}-${column.id}`}
                       onPointerDown={(event) => {
                         if (event.button !== 0) return;
-                        selectSheetCell({ rowId: row.id, columnId: column.id });
+                        selection.select({ rowId: row.id, columnId: column.id });
                       }}
-                      onPointerEnter={() => extendSheetSelection({ rowId: row.id, columnId: column.id })}
+                      onPointerEnter={() => selection.extend({ rowId: row.id, columnId: column.id })}
                     >
                       <div className={image ? "cellValueWrap hasImage" : "cellValueWrap"}>
                         {image ? null : (
@@ -1084,7 +976,7 @@ export function App() {
                             value={column.values[row.id] ?? ""}
                             aria-label={`${column.name} ${row.label}`}
                             placeholder="값 입력"
-                            onFocus={() => focusSheetCell({ rowId: row.id, columnId: column.id })}
+                            onFocus={() => selection.focus({ rowId: row.id, columnId: column.id })}
                             onPaste={(event) => handleSheetPaste(event, row.id, column.id)}
                             onChange={(event) => void updateCell(column.id, row.id, event.target.value)}
                           />
