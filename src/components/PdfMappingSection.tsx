@@ -9,6 +9,8 @@ type Props = {
   /** 일괄(columnId) / 단건(`${columnId}:${pdfRowId}`) 다운로드 버튼 disabled 판정. */
   busyId?: string;
   hasAreas: (pdfRowId: string) => boolean;
+  /** 이 (열 × PDF행)에 미세조정 보정이 적용돼 있는지. 버튼 색 구분에 쓴다. */
+  hasAdjust: (columnId: string, pdfRowId: string) => boolean;
   onUpdatePdfRow: (pdfRowId: string, label: string) => void;
   onDeletePdfRow: (pdfRowId: string) => void;
   onAddPdfRow: () => void;
@@ -28,6 +30,7 @@ export function PdfMappingSection({
   pdfRows,
   busyId,
   hasAreas,
+  hasAdjust,
   onUpdatePdfRow,
   onDeletePdfRow,
   onAddPdfRow,
@@ -101,10 +104,6 @@ export function PdfMappingSection({
                     {pdfRow.pdf.name}
                   </span>
                   <div className="pdfRowCommonActions">
-                    <button type="button" onClick={() => onOpenSetup(pdfRow)}>
-                      <Pencil size={13} />
-                      기준 영역
-                    </button>
                     <label className="pdfReplaceButton" title="PDF 교체">
                       <Upload size={13} />
                       교체
@@ -114,25 +113,45 @@ export function PdfMappingSection({
                         onChange={(event) => void onUploadPdf(pdfRow, event.target.files?.[0])}
                       />
                     </label>
+                    <button
+                      type="button"
+                      className="pdfBaseAreaButton"
+                      title="기준 영역 설정"
+                      onClick={() => onOpenSetup(pdfRow)}
+                    >
+                      <Pencil size={13} />
+                      기준 영역
+                    </button>
                   </div>
                 </div>
               ) : (
-                <label
-                  className={pdfDropTarget === pdfRow.id ? "pdfUploadSlot dragging" : "pdfUploadSlot"}
-                  onDragOver={(event) => handleDragOver(event, pdfRow.id)}
-                  onDragEnter={(event) => handleDragOver(event, pdfRow.id)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={(event) => handleDrop(event, pdfRow)}
-                >
-                  <Upload size={15} />
-                  <span>PDF 드롭</span>
-                  <small>또는 클릭</small>
-                  <input
-                    type="file"
-                    accept="application/pdf"
-                    onChange={(event) => void onUploadPdf(pdfRow, event.target.files?.[0])}
-                  />
-                </label>
+                <>
+                  <label
+                    className={pdfDropTarget === pdfRow.id ? "pdfUploadSlot dragging" : "pdfUploadSlot"}
+                    onDragOver={(event) => handleDragOver(event, pdfRow.id)}
+                    onDragEnter={(event) => handleDragOver(event, pdfRow.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(event) => handleDrop(event, pdfRow)}
+                  >
+                    <Upload size={15} />
+                    <span>PDF 드롭</span>
+                    <small>또는 클릭</small>
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      onChange={(event) => void onUploadPdf(pdfRow, event.target.files?.[0])}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="pdfBaseAreaButton"
+                    disabled
+                    title="먼저 PDF를 올려주세요"
+                  >
+                    <Pencil size={13} />
+                    기준 영역
+                  </button>
+                </>
               )}
             </div>
             {columns.map((column) => (
@@ -143,17 +162,28 @@ export function PdfMappingSection({
                   <span className="pdfSlotHint">왼쪽에서 기준 영역을 먼저 잡으세요</span>
                 ) : (
                   <div className="pdfColumnActions">
-                    <button type="button" onClick={() => onOpenSetup(pdfRow, column)}>
-                      <SlidersHorizontal size={14} />
-                      미세조정
-                    </button>
+                    {(() => {
+                      const tuned = hasAdjust(column.id, pdfRow.id);
+                      return (
+                        <button
+                          type="button"
+                          className={tuned ? "adjustButton tuned" : "adjustButton untuned"}
+                          onClick={() => onOpenSetup(pdfRow, column)}
+                        >
+                          <SlidersHorizontal size={14} />
+                          {tuned ? "미세조정 완료" : "미세조정 미완료"}
+                        </button>
+                      );
+                    })()}
                     <button
+                      className="pdfDownloadButton"
                       type="button"
+                      title="PDF 다운로드"
+                      aria-label="PDF 다운로드"
                       disabled={busyId === `${column.id}:${pdfRow.id}`}
                       onClick={() => void onDownloadOne(column, pdfRow)}
                     >
                       <FileDown size={14} />
-                      다운로드
                     </button>
                   </div>
                 )}

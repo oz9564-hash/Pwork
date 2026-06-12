@@ -88,6 +88,12 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
     return adjusts.find((adjust) => adjust.id === id);
   }
 
+  /** 이 (열 × PDF행)에 실제로 덮어쓴 보정값이 하나라도 있는지. 미세조정 버튼 색 판정에 쓴다. */
+  function hasAdjust(columnId: string, pdfRowId: string) {
+    const adjust = findAdjust(columnId, pdfRowId);
+    return Boolean(adjust && Object.keys(adjust.overrides).length > 0);
+  }
+
   async function addPdfRow() {
     const row: PdfSlotRow = {
       id: createId("pdfrow"),
@@ -271,6 +277,7 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
     reset,
     reloadPdfData,
     areasForPdfRow,
+    hasAdjust,
     addPdfRow,
     updatePdfRow,
     deletePdfRow,

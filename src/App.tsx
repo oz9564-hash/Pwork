@@ -309,6 +309,7 @@ export function App() {
               pdfRows={pdf.pdfRows}
               busyId={busyId}
               hasAreas={(pdfRowId) => pdf.areasForPdfRow(pdfRowId).length > 0}
+              hasAdjust={(columnId, pdfRowId) => pdf.hasAdjust(columnId, pdfRowId)}
               onUpdatePdfRow={pdf.updatePdfRow}
               onDeletePdfRow={(pdfRowId) => void pdf.deletePdfRow(pdfRowId)}
               onAddPdfRow={() => void pdf.addPdfRow()}

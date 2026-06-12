@@ -910,10 +910,11 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-direction: column;
-  gap: 1px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--space-1);
   width: 100%;
-  min-height: calc(52px * var(--sheet-zoom));
+  min-height: var(--sheet-control-height);
   border: 2px dashed var(--border-dashed);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
@@ -1078,6 +1079,83 @@ button:disabled {
 .pdfColumnActions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* 미세조정 버튼이 남는 폭을 차지하고, 다운로드는 아이콘만 표시하는 작은 정사각형 버튼 */
+.pdfColumnActions .adjustButton {
+  flex: 1;
+}
+
+.pdfColumnActions .pdfDownloadButton {
+  flex: 0 0 auto;
+  width: var(--sheet-control-height);
+  min-width: var(--sheet-control-height);
+  padding: 0;
+}
+
+/* 미세조정: 보정 완료 = 파랑, 미보정 = 빨강 */
+.pdfColumnActions .adjustButton.tuned {
+  border-color: var(--blue-500, #2563eb);
+  background: var(--blue-50, #eff6ff);
+  color: var(--blue-700, #1d4ed8);
+}
+
+.pdfColumnActions .adjustButton.tuned:hover {
+  border-color: var(--blue-600, #1d4ed8);
+  background: var(--blue-100, #dbeafe);
+  color: var(--blue-700, #1d4ed8);
+}
+
+.pdfColumnActions .adjustButton.untuned {
+  border-color: var(--red-400, #f87171);
+  background: var(--red-50, #fef2f2);
+  color: var(--red-600, #dc2626);
+}
+
+.pdfColumnActions .adjustButton.untuned:hover {
+  border-color: var(--red-500, #ef4444);
+  background: var(--red-100, #fee2e2);
+  color: var(--red-700, #b91c1c);
+}
+
+/* 기준 영역: PDF 행 라벨칸에 항상 표시.
+   .rowLabel button(아이콘 버튼: 정사각형 + hover시에만 노출)을 덮어써야 하므로 선택자 특이도를 높인다. */
+.pdfRowLabel .pdfBaseAreaButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: auto;
+  min-height: var(--sheet-control-height);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--sheet-small-font-size);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  opacity: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.pdfRowLabel .pdfBaseAreaButton:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--bg-muted);
+  color: var(--text);
+}
+
+.pdfRowLabel .pdfBaseAreaButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* PDF가 올라간 행에서는 교체 + 기준 영역을 한 줄에 가로로 균등 배치한다. */
+.pdfRowCommonActions .pdfBaseAreaButton {
+  flex: 1;
+  width: auto;
 }
 
 .pdfSlotHint {
