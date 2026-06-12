@@ -58,6 +58,14 @@ export async function renderFilledPdf({
     const rect = toPageRect(area, adjust, pageWidth, pageHeight);
     const kind = resolveAreaKind(area, column);
 
+    // [diag] pdf-lib이 보는 페이지 크기/회전 + 이 영역의 실제 사각형(원점 좌하단).
+    // 한 줄 문자열로 찍어 콘솔 잘림 방지. x+width가 pageWidth를 넘으면 페이지 밖으로 잘린다.
+    console.log(
+      `[diag:render] kind=${kind} page=${pageWidth.toFixed(1)}x${pageHeight.toFixed(1)} rot=${page.getRotation().angle} ` +
+        `rect x=${rect.x.toFixed(1)} y=${rect.y.toFixed(1)} w=${rect.width.toFixed(1)} h=${rect.height.toFixed(1)} ` +
+        `right=${(rect.x + rect.width).toFixed(1)} top=${(rect.y + rect.height).toFixed(1)} row=${area.rowId}`,
+    );
+
     await getRenderer(kind).render({
       doc: pdfDocument,
       page,

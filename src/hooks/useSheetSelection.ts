@@ -13,12 +13,24 @@ type SheetSelection = {
   focus: SheetCellPoint;
 };
 
+export type SheetSelectionController = {
+  select: (point: SheetCellPoint) => void;
+  focus: (point: SheetCellPoint) => void;
+  extend: (point: SheetCellPoint) => void;
+  setRange: (anchor: SheetCellPoint, focus: SheetCellPoint) => void;
+  clear: () => void;
+  clearIfRow: (rowId: string) => void;
+  clearIfColumn: (columnId: string) => void;
+  getCellClass: (rowId: string, columnId?: string) => string;
+  handleCopy: (event: ClipboardEvent<HTMLElement>) => void;
+};
+
 /**
  * 시트 범위 선택(드래그/포커스)과 선택 영역 복사를 담당한다.
  * 선택은 셀 id 쌍(anchor/focus)으로 들고, 사각형 범위는 rows/columns의
  * 현재 인덱스로 계산하므로 행/열이 재정렬돼도 선택 의미가 유지된다.
  */
-export function useSheetSelection(rows: FieldRow[], columns: ValueColumn[]) {
+export function useSheetSelection(rows: FieldRow[], columns: ValueColumn[]): SheetSelectionController {
   const [selection, setSelection] = useState<SheetSelection>();
   // 드래그로 범위를 넓히는 중인지. pointerdown(select)~window pointerup 동안만 true.
   const selectingRef = useRef(false);

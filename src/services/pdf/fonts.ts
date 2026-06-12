@@ -9,12 +9,14 @@ export async function embedUsableFont(pdfDocument: PDFDocument, fontAsset?: Font
       // 전체 임베드 시 결과 PDF가 비대해지고 생성도 느려진다.
       const font = await pdfDocument.embedFont(await fontAsset.file.arrayBuffer(), { subset: true });
       font.widthOfTextAtSize("test", 12);
+      console.log("[diag:font] embedded custom uploaded font", { name: fontAsset.name });
       return font;
     } catch (error) {
       console.error("[pdf-download] custom font failed, fallback to default font", error);
     }
   }
 
+  console.log("[diag:font] no custom font, using default candidates");
   return embedDefaultFont(pdfDocument);
 }
 
@@ -23,10 +25,15 @@ async function embedDefaultFont(pdfDocument: PDFDocument) {
 
   for (const path of candidates) {
     try {
-      const response = await fetch(`${import.meta.env.BASE_URL}${path}`);
-      if (!response.ok) continue;
+      const url = `${import.meta.env.BASE_URL}${path}`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.warn("[diag:font] default candidate fetch not ok", { url, status: response.status });
+        continue;
+      }
       const font = await pdfDocument.embedFont(await response.arrayBuffer(), { subset: true });
       font.widthOfTextAtSize("test", 12);
+      console.log("[diag:font] embedded default candidate", { path });
       return font;
     } catch (error) {
       console.error("[pdf-download] default font candidate failed", { path, error });
@@ -34,5 +41,6 @@ async function embedDefaultFont(pdfDocument: PDFDocument) {
     }
   }
 
+  console.warn("[diag:font] ALL Korean candidates failed → Helvetica (no Korean glyphs)");
   return pdfDocument.embedFont(StandardFonts.Helvetica);
 }

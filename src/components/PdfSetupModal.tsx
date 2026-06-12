@@ -8,6 +8,7 @@ import { repository } from "../services/storage";
 import { renderFilledPdf } from "../services/pdfExport";
 import { resolveAreaKind } from "../services/pdf/areaKind";
 import { resolveArea } from "../services/pdf/geometry";
+import { LINE_HEIGHT } from "../services/pdf/textLayout";
 import type { AreaOverride, ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -18,8 +19,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 /** PDF 원본 대비 화면에 렌더링하는 배율. */
 const DISPLAY_SCALE = 1.35;
 const DEFAULT_FONT_SIZE = 11;
-/** 오버레이/측정용 폰트. 출력과 같은 폰트(ActivePdfFont)를 우선 써서 미리보기 = 수정 화면을 맞춘다. */
-const AREA_FONT_FAMILY = '"ActivePdfFont", "LocalBatang", serif';
+/** 오버레이/측정용 폰트. 출력과 같은 폰트(ActivePdfFont→DefaultPdfFont=human-myeongjo)를 써서
+ *  사용자 폰트 로드 전/없을 때도 측정·줄바꿈이 출력과 일치하게 한다. */
+const AREA_FONT_FAMILY = '"ActivePdfFont", "DefaultPdfFont", serif';
 /** 오버레이에서 출력 폰트를 로드해 등록하는 font-family 이름. */
 const ACTIVE_FONT_FAMILY = "ActivePdfFont";
 
@@ -147,6 +149,17 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       const viewport = loadedPage.getViewport({ scale: DISPLAY_SCALE });
       const context = canvas.getContext("2d");
       if (!context || cancelled) return;
+
+      // [diag] pdf.js가 보는 페이지(편집=원본 / 미리보기=결과PDF). DISPLAY_SCALE=1.35 반영된 viewport.
+      // view=[x0,y0,x1,y1](미회전 PDF 단위). pageExport의 [diag:render](pdf-lib getSize)와 비교.
+      console.log("[diag:page] pdf.js viewport", {
+        mode: showPreview ? "preview" : "edit",
+        rotation: loadedPage.rotate,
+        view: loadedPage.view,
+        viewportW: Number(viewport.width.toFixed(1)),
+        viewportH: Number(viewport.height.toFixed(1)),
+        displayScale: DISPLAY_SCALE,
+      });
 
       canvas.width = viewport.width;
       canvas.height = viewport.height;
@@ -370,8 +383,14 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
         await face.load();
         if (cancelled) return;
         document.fonts.add(face);
+        // [diag] 오버레이 폰트(ActivePdfFont) 로드 성공/적용 확인. 실패하면 폴백(DefaultPdfFont/serif)으로 떨어진다.
+        console.log("[diag:overlayFont] ActivePdfFont loaded", {
+          src: font ? `upload:${font.name}` : "default:human-myeongjo.ttf",
+          activeReady: document.fonts.check(`16px "${ACTIVE_FONT_FAMILY}"`),
+          defaultReady: document.fonts.check('16px "DefaultPdfFont"'),
+        });
       } catch (error) {
-        console.error("[pdf-overlay] active font load failed", error);
+        console.error("[diag:overlayFont] ActivePdfFont load FAILED → falls back to DefaultPdfFont/serif", error);
       }
     }
 
@@ -582,6 +601,25 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       }
     : { width: 0, height: 0 };
 
+  // [diag] 편집 오버레이의 area별 박스/폰트(px). 출력 [diag:textRender](pt)와 같은 area를 비교한다.
+  // 참고: viewport = pageSize(pt) × DISPLAY_SCALE 이므로, 정상이면 boxWidthPx ≈ rectWidth × 1.35,
+  // fontPx ≈ fontSize × 1.35 여야 한다. 어긋나면 페이지 크기/회전 또는 폰트가 둘 사이에서 다른 것.
+  useEffect(() => {
+    if (!canEdit) return;
+    for (const area of pageAreas) {
+      const box = resolved(area);
+      // PDF pt 기준으로 환산해 [diag:render]와 바로 비교(화면 px ÷ DISPLAY_SCALE).
+      const xPt = (box.x * size.width) / DISPLAY_SCALE;
+      const wPt = (box.width * size.width) / DISPLAY_SCALE;
+      console.log(
+        `[diag:overlay] "${getAreaValue(area.rowId)}" size=${box.fontSize} ` +
+          `pt x=${xPt.toFixed(1)} w=${wPt.toFixed(1)} right=${(xPt + wPt).toFixed(1)} ` +
+          `topPt=${((box.y * size.height) / DISPLAY_SCALE).toFixed(1)} row=${area.rowId}`,
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageAreas, size, adjust, canEdit]);
+
   return (
     <div className="modalBackdrop" role="dialog" aria-modal="true">
       <section className="modal">
@@ -737,7 +775,12 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         min={6}
                         max={48}
                         value={selectedArea.fontSize}
-                        onChange={(event) => updateSelectedArea({ fontSize: Number(event.target.value) })}
+                        onChange={(event) => {
+                          // 폰트 크기를 바꾸면 박스 높이도 한 줄에 맞춰 다시 잡는다.
+                          // (안 그러면 height가 옛 폰트 기준으로 남아 편집(auto)·출력이 어긋난다.)
+                          const fontSize = Number(event.target.value);
+                          updateSelectedArea({ fontSize, height: measureAreaHeight(fontSize, size.height) });
+                        }}
                       />
                     </label>
                     <button className="button danger full" type="button" onClick={() => removeArea(selectedAreaId)}>
@@ -822,11 +865,16 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                           left: box.x * size.width,
                           top: box.y * size.height,
                           width: box.width * size.width,
-                          // 텍스트: 내용 높이에 맞춰 박스가 늘어나도록 minHeight만(줄바꿈 시 박스가 글을 감쌈).
-                          // 이미지: contain 기준이 되므로 높이 고정.
+                          // 이미지: contain 기준이라 높이 고정.
+                          // 텍스트: 한 줄(minHeight) 이상이면 내용에 맞춰 세로로 늘어나 줄바꿈을 감싼다(출력 렌더러와 동일).
                           ...(isImg
                             ? { height: box.height * size.height }
-                            : { minHeight: box.height * size.height }),
+                            : {
+                                minHeight: Math.max(
+                                  box.height * size.height,
+                                  box.fontSize * DISPLAY_SCALE * LINE_HEIGHT,
+                                ),
+                              }),
                           fontSize: box.fontSize * DISPLAY_SCALE,
                         }}
                         onPointerDown={(event) => startDrag(event, area)}
@@ -907,5 +955,9 @@ function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
 }
 
 function measureAreaHeight(fontSize: number, pageHeight: number) {
-  return clamp((fontSize * 1.55) / pageHeight, 0.001, 0.12);
+  // pageHeight는 화면 px(=PDF pt × DISPLAY_SCALE)이므로 fontSize(pt)도 같은 px 단위로 환산해야 한다.
+  // (과거엔 pt를 px로 안 바꿔 나눠서 박스 높이가 DISPLAY_SCALE배 작게 잡혔다.)
+  // 한 줄 높이는 렌더러의 LINE_HEIGHT와 동일하게 맞춰 편집 = 출력.
+  const lineHeightPx = fontSize * DISPLAY_SCALE * LINE_HEIGHT;
+  return clamp(lineHeightPx / pageHeight, 0.001, 0.2);
 }

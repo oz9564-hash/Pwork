@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import type { ClipboardEvent } from "react";
 import { Copy, GripVertical, Plus, Trash2 } from "lucide-react";
 import { CellImageControl } from "./CellImageControl";
-import type { useSheetSelection } from "../hooks/useSheetSelection";
+import type { SheetSelectionController } from "../hooks/useSheetSelection";
 import type { FieldRow, ValueColumn } from "../types";
 
 type Props = {
@@ -10,7 +10,7 @@ type Props = {
   columns: ValueColumn[];
   /** 열 복사 버튼 disabled 판정(복사 중인 열 id). */
   busyId?: string;
-  selection: ReturnType<typeof useSheetSelection>;
+  selection: SheetSelectionController;
   onUpdateColumnName: (columnId: string, name: string) => void;
   onDuplicateColumn: (column: ValueColumn) => void;
   onDeleteColumn: (columnId: string) => void;

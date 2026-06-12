@@ -131,15 +131,16 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
       (row, index) => row.createdAt !== rows[index]?.createdAt || row.id !== rows[index]?.id,
     );
 
-    setRows(reorderedRows);
     // 재정렬 결과는 즉시 기록한다. bypass가 이 행들의 디바운스 예약(라벨 저장)을 취소해
     // 나중에 실행된 예약이 createdAt(정렬 인덱스)을 되돌리는 것을 막는다.
-    await persist(() =>
+    const ok = await persist(() =>
       rowSaver.bypass(
         changedRows.map((row) => row.id),
         () => Promise.all(changedRows.map((row) => repository.saveRow(row))),
       ),
     );
+    if (!ok) return;
+    setRows(reorderedRows);
   }
 
   /** 행 삭제. 선택 해제는 호출부(App)가 반환값을 보고 처리한다. */
@@ -179,7 +180,7 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
    */
   async function duplicateColumn(source: ValueColumn): Promise<ValueColumn> {
     const now = Date.now();
-    let copiedColumn: ValueColumn = {
+    const copiedColumn: ValueColumn = {
       id: createId("col"),
       name: `${source.name} 복사`,
       values: { ...source.values },
@@ -188,15 +189,30 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
       updatedAt: now,
     };
 
-    await repository.saveColumn(copiedColumn);
+    let nextColumn = copiedColumn;
+    try {
+      const imageCopies = await Promise.all(
+        Object.entries(source.images ?? {}).map(async ([rowId, image]) => ({
+          rowId,
+          image,
+          file: await repository.getCellImageFile(source.id, rowId, image),
+        })),
+      );
 
-    for (const [rowId, image] of Object.entries(source.images ?? {})) {
-      const file = await repository.getCellImageFile(source.id, rowId, image);
-      copiedColumn = await repository.saveCellImage(copiedColumn, rowId, file, image);
+      await repository.saveColumn(nextColumn);
+
+      for (const { rowId, image, file } of imageCopies) {
+        nextColumn = await repository.saveCellImage(nextColumn, rowId, file, image);
+      }
+    } catch (error) {
+      await repository.deleteColumn(copiedColumn.id).catch((cleanupError) => {
+        console.error("[column-duplicate] cleanup failed", cleanupError);
+      });
+      throw error;
     }
 
-    setColumns((current) => [...current, copiedColumn]);
-    return copiedColumn;
+    setColumns((current) => [...current, nextColumn]);
+    return nextColumn;
   }
 
   function updateColumnName(columnId: string, name: string) {
@@ -300,26 +316,29 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
       });
     });
 
-    setRows(nextRows);
-    setColumns(nextColumns);
-
     const rowsToSave = nextRows.filter((row) => changedRows.has(row.id) || !existingRowIds.has(row.id));
     const columnsToSave = nextColumns.filter(
       (column) => changedColumnIds.has(column.id) || !existingColumnIds.has(column.id),
     );
     // 붙여넣기로 즉시 기록하는 행/열은 bypass로 디바운스 예약을 걷어내 stale write를 막는다.
-    await rowSaver.bypass(
-      rowsToSave.map((row) => row.id),
-      () =>
-        columnSaver.bypass(
-          columnsToSave.map((column) => column.id),
-          () =>
-            Promise.all([
-              ...rowsToSave.map((row) => repository.saveRow(row)),
-              ...columnsToSave.map((column) => repository.saveColumn(column)),
-            ]),
-        ),
+    const ok = await persist(() =>
+      rowSaver.bypass(
+        rowsToSave.map((row) => row.id),
+        () =>
+          columnSaver.bypass(
+            columnsToSave.map((column) => column.id),
+            () =>
+              Promise.all([
+                ...rowsToSave.map((row) => repository.saveRow(row)),
+                ...columnsToSave.map((column) => repository.saveColumn(column)),
+              ]),
+          ),
+      ),
     );
+    if (!ok) return undefined;
+
+    setRows(nextRows);
+    setColumns(nextColumns);
 
     return {
       anchor: {
