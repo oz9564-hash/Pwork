@@ -310,7 +310,6 @@ export function App() {
               busyId={busyId}
               hasAreas={(pdfRowId) => pdf.areasForPdfRow(pdfRowId).length > 0}
               hasAdjust={(columnId, pdfRowId) => pdf.hasAdjust(columnId, pdfRowId)}
-              onUpdatePdfRow={pdf.updatePdfRow}
               onDeletePdfRow={(pdfRowId) => void pdf.deletePdfRow(pdfRowId)}
               onAddPdfRow={() => void pdf.addPdfRow()}
               onUploadPdf={(pdfRow, file) => void pdf.uploadCommonPdf(pdfRow, file)}

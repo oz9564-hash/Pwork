@@ -11,7 +11,6 @@ type Props = {
   hasAreas: (pdfRowId: string) => boolean;
   /** 이 (열 × PDF행)에 미세조정 보정이 적용돼 있는지. 버튼 색 구분에 쓴다. */
   hasAdjust: (columnId: string, pdfRowId: string) => boolean;
-  onUpdatePdfRow: (pdfRowId: string, label: string) => void;
   onDeletePdfRow: (pdfRowId: string) => void;
   onAddPdfRow: () => void;
   onUploadPdf: (pdfRow: PdfSlotRow, file: File | undefined) => void;
@@ -31,7 +30,6 @@ export function PdfMappingSection({
   busyId,
   hasAreas,
   hasAdjust,
-  onUpdatePdfRow,
   onDeletePdfRow,
   onAddPdfRow,
   onUploadPdf,
@@ -87,32 +85,20 @@ export function PdfMappingSection({
           <Fragment key={pdfRow.id}>
             <div className="sheetCell rowLabel stickyCol pdfRowLabel">
               <div className="pdfRowLabelTop">
-                <input
-                  value={pdfRow.label}
-                  aria-label="PDF 행 이름"
-                  placeholder="PDF"
-                  onChange={(event) => void onUpdatePdfRow(pdfRow.id, event.target.value)}
-                />
+                <span
+                  className={pdfRow.pdf ? "pdfRowName" : "pdfRowName empty"}
+                  title={pdfRow.pdf?.name ?? "PDF 미선택"}
+                >
+                  <FileText size={13} />
+                  {pdfRow.pdf?.name ?? "PDF 미선택"}
+                </span>
                 <button type="button" title="PDF 행 삭제" onClick={() => void onDeletePdfRow(pdfRow.id)}>
                   <Trash2 size={14} />
                 </button>
               </div>
               {pdfRow.pdf ? (
                 <div className="pdfRowCommon">
-                  <span className="pdfRowFileName" title={pdfRow.pdf.name}>
-                    <FileText size={13} />
-                    {pdfRow.pdf.name}
-                  </span>
                   <div className="pdfRowCommonActions">
-                    <label className="pdfReplaceButton" title="PDF 교체">
-                      <Upload size={13} />
-                      교체
-                      <input
-                        type="file"
-                        accept="application/pdf"
-                        onChange={(event) => void onUploadPdf(pdfRow, event.target.files?.[0])}
-                      />
-                    </label>
                     <button
                       type="button"
                       className="pdfBaseAreaButton"
