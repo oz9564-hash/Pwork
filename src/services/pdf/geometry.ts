@@ -22,7 +22,7 @@ export function resolveArea(area: PdfArea, adjust?: ColumnPdfAdjust): ResolvedAr
     y: area.y + (override?.dy ?? 0),
     width: override?.width ?? area.width,
     height: override?.height ?? area.height,
-    fontSize: area.fontSize,
+    fontSize: override?.fontSize ?? area.fontSize,
   };
 }
 

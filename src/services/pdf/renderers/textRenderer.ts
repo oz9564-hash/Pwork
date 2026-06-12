@@ -8,11 +8,11 @@ import type { AreaRenderer } from "./types";
  */
 export const textRenderer: AreaRenderer = {
   kind: "text",
-  render({ page, area, rect, column, row, font }) {
+  render({ page, rect, fontSize, column, row, font }) {
     const text = column.values[row.id] ?? "";
     if (!text) return;
 
-    const size = area.fontSize;
+    const size = fontSize;
     const lineGap = size * LINE_HEIGHT;
     // 위치 기준은 박스 "상단" 고정. 줄바꿈된 줄은 아래로 계속 그려 박스가 글을 감싸듯 늘어난다
     // (편집 오버레이의 height:auto + minHeight 와 동일한 모델 → 편집 = 출력).

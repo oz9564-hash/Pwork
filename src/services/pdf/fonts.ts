@@ -5,9 +5,9 @@ import type { FontAsset } from "../../types";
 export async function embedUsableFont(pdfDocument: PDFDocument, fontAsset?: FontAsset) {
   if (fontAsset) {
     try {
-      // subset: true → 실제 사용된 글리프만 임베드한다. 한글 TTF는 수 MB라
-      // 전체 임베드 시 결과 PDF가 비대해지고 생성도 느려진다.
-      const font = await pdfDocument.embedFont(await fontAsset.file.arrayBuffer(), { subset: true });
+      // subset: false — pdf-lib의 서브셋터가 한글 TTF에서 글리프를 간헐적으로 누락시켜
+      // 일부 글자가 빈 칸으로 출력되는 버그가 있다. 용량(수 MB)을 감수하고 전체 임베드한다.
+      const font = await pdfDocument.embedFont(await fontAsset.file.arrayBuffer(), { subset: false });
       font.widthOfTextAtSize("test", 12);
       console.log("[diag:font] embedded custom uploaded font", { name: fontAsset.name });
       return font;
@@ -31,7 +31,8 @@ async function embedDefaultFont(pdfDocument: PDFDocument) {
         console.warn("[diag:font] default candidate fetch not ok", { url, status: response.status });
         continue;
       }
-      const font = await pdfDocument.embedFont(await response.arrayBuffer(), { subset: true });
+      // 사용자 폰트와 같은 이유로 subset 비활성(한글 글리프 누락 버그).
+      const font = await pdfDocument.embedFont(await response.arrayBuffer(), { subset: false });
       font.widthOfTextAtSize("test", 12);
       console.log("[diag:font] embedded default candidate", { path });
       return font;

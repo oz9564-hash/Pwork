@@ -463,6 +463,10 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
 
     setAreas((current) => [...current, area]);
     setSelectedAreaId(area.id);
+    // 한 번 놓으면 항목 선택과 따라다니는 미리보기를 해제한다(클릭 한 번 = 영역 하나).
+    // 다시 추가하려면 왼쪽 목록에서 항목을 다시 골라야 한다.
+    setSelectedRowId("");
+    setHoverPoint(null);
   }
 
   function startDrag(event: ReactPointerEvent, area: PdfArea) {
@@ -547,12 +551,12 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     patchOverride(areaId, axis === "width" ? { width: value } : { height: value });
   }
 
-  /** 이 칸의 크기 덮어쓰기만 제거(위치 보정은 유지) → 기준 크기로 복귀. */
+  /** 이 칸의 크기 덮어쓰기(박스·글자)만 제거(위치 보정은 유지) → 기준 크기로 복귀. */
   function resetOverrideSize(areaId: string) {
     setAdjust((current) => {
       const prev = current.overrides[areaId];
       if (!prev) return current;
-      const { width: _w, height: _h, ...rest } = prev;
+      const { width: _w, height: _h, fontSize: _f, ...rest } = prev;
       return { ...current, overrides: { ...current.overrides, [areaId]: rest } };
     });
   }
@@ -723,6 +727,24 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         type="number"
                         value={selectedOverridePx.dy}
                         onChange={(event) => setOverridePx(selectedArea.id, "dy", Number(event.target.value))}
+                      />
+                    </label>
+                    <label>
+                      크기
+                      <input
+                        type="number"
+                        min={6}
+                        max={48}
+                        value={resolved(selectedArea).fontSize}
+                        onChange={(event) => {
+                          // 기준 모드와 동일한 패턴: 글자 크기를 바꾸면 박스 높이도 한 줄에 맞춰 다시 잡는다.
+                          // 이 열에서만 적용되는 덮어쓰기(다른 필드는 병합으로 보존).
+                          const fontSize = Number(event.target.value);
+                          patchOverride(selectedArea.id, {
+                            fontSize,
+                            height: measureAreaHeight(fontSize, size.height),
+                          });
+                        }}
                       />
                     </label>
                     <div className="railTitle">이 칸 크기 (px)</div>

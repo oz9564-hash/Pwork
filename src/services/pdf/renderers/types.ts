@@ -9,6 +9,8 @@ export type AreaRenderContext = {
   area: PdfArea;
   /** 보정까지 반영된 pdf-lib 페이지 좌표(원점 좌하단). */
   rect: PageRect;
+  /** 보정까지 반영된 글자 크기(pt). area.fontSize 대신 이 값을 쓴다(열별 덮어쓰기 반영). */
+  fontSize: number;
   column: ValueColumn;
   row: FieldRow;
   font: PDFFont;

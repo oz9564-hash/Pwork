@@ -2,7 +2,7 @@ import fontkit from "@pdf-lib/fontkit";
 import { PDFDocument } from "pdf-lib";
 import type { ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, ValueColumn } from "../types";
 import { resolveAreaKind } from "./pdf/areaKind";
-import { toPageRect } from "./pdf/geometry";
+import { resolveArea, toPageRect } from "./pdf/geometry";
 import { embedUsableFont } from "./pdf/fonts";
 import { getRenderer } from "./pdf/renderers";
 
@@ -71,6 +71,7 @@ export async function renderFilledPdf({
       page,
       area,
       rect,
+      fontSize: resolveArea(area, adjust).fontSize,
       column,
       row,
       font,

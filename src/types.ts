@@ -64,8 +64,9 @@ export type PdfArea = {
  * 열별 개별 영역 보정. 기준 영역(PdfArea) 위에 이 열에서만 덧씌운다.
  * - dx/dy: 위치 오프셋(정규화)
  * - width/height: 박스 크기 덮어쓰기(정규화). 있으면 기준 크기를 대체한다.
+ * - fontSize: 글자 크기 덮어쓰기(pt). 있으면 기준 글자 크기를 대체한다.
  *
- * 모두 선택값이다(없으면 기준값 사용). 향후 열별 fontSize 등도 여기에 추가한다.
+ * 모두 선택값이다(없으면 기준값 사용).
  * 기존 저장 데이터({dx, dy})와 하위호환된다.
  */
 export type AreaOverride = {
@@ -73,6 +74,7 @@ export type AreaOverride = {
   dy?: number;
   width?: number;
   height?: number;
+  fontSize?: number;
 };
 
 /**
