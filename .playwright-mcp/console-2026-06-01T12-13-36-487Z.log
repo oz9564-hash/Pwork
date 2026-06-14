@@ -1,6 +1,0 @@
-[     377ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5173/node_modules/.vite/deps/react-dom_client.js?v=8599ce33:20102
-[ 6676704ms] [ERROR] [vite] SyntaxError: The requested module '/src/services/storage.ts?t=1780322678556' does not provide an export named 'localRepository' @ http://127.0.0.1:5173/@vite/client:881
-[ 6676710ms] [ERROR] [vite] Failed to reload /src/components/PdfSetupModal.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5173/@vite/client:881
-[ 6676710ms] [ERROR] [vite] SyntaxError: The requested module '/src/services/storage.ts?t=1780322678556' does not provide an export named 'localRepository' @ http://127.0.0.1:5173/@vite/client:881
-[ 6676711ms] [ERROR] [vite] Failed to reload /src/App.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://127.0.0.1:5173/@vite/client:881
-[ 6678110ms] The requested module '/src/services/storage.ts?t=1780322678556' does not provide an export named 'localRepository'
