@@ -11,6 +11,7 @@ import type { BusyFeedback, CellImagePreview, UploadNotice } from "./components/
 import { useSheetSelection } from "./hooks/useSheetSelection";
 import { useSheetData } from "./hooks/useSheetData";
 import { usePdfData } from "./hooks/usePdfData";
+import { saveStatusStore } from "./lib/saveStatus";
 import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
 import { repository } from "./services/storage";
 import type { PdfSlotRow, ValueColumn } from "./types";
@@ -61,6 +62,22 @@ export function App() {
 
   useEffect(() => {
     return watchAuth(setUser);
+  }, []);
+
+  // 저장이 안 끝난 편집이 있으면 새로고침/창닫기 직전에 브라우저 경고를 띄운다.
+  // (훅의 beforeunload flush가 저장을 시도하지만, 이탈 중 비동기 쓰기는 완료가 보장되지
+  //  않으므로, 미저장 상태일 때만 사용자가 떠날지 확인하게 한다.) 새 상태 추적 없이
+  // 이미 있는 saveStatusStore를 그대로 읽는다.
+  useEffect(() => {
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      const status = saveStatusStore.getSnapshot();
+      if (status === "saved") return;
+      event.preventDefault();
+      // 일부 브라우저는 returnValue가 설정돼야 경고 대화상자를 띄운다(문구는 브라우저가 고정).
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
   useEffect(() => {
