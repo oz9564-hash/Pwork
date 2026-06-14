@@ -177,6 +177,50 @@ button:disabled {
   font-size: var(--fs-sm);
 }
 
+.saveButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.saveStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium, 500);
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.saveStatus-saving {
+  color: var(--text-secondary);
+}
+
+.saveStatus-unsaved {
+  color: var(--text-secondary);
+}
+
+.saveStatus-error {
+  color: var(--danger, #dc2626);
+}
+
+.saveStatusSpin {
+  animation: saveStatusSpin 0.8s linear infinite;
+}
+
+@keyframes saveStatusSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .workspaceSummary span {
   display: inline-flex;
   align-items: center;

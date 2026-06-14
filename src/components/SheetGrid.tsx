@@ -2,6 +2,7 @@ import { Fragment, useState } from "react";
 import type { ClipboardEvent } from "react";
 import { Copy, GripVertical, Plus, Trash2 } from "lucide-react";
 import { CellImageControl } from "./CellImageControl";
+import { GridTextInput } from "./GridTextInput";
 import type { SheetSelectionController } from "../hooks/useSheetSelection";
 import type { FieldRow, ValueColumn } from "../types";
 
@@ -12,11 +13,15 @@ type Props = {
   busyId?: string;
   selection: SheetSelectionController;
   onUpdateColumnName: (columnId: string, name: string) => void;
+  /** 열 문서(이름·셀 값 공용) 즉시 저장. 입력 blur/Enter 시 호출. */
+  onCommitColumn: (columnId: string) => void;
   onDuplicateColumn: (column: ValueColumn) => void;
   onDeleteColumn: (columnId: string) => void;
   onAddColumn: () => void;
   onAddRow: () => void;
   onUpdateRow: (rowId: string, label: string) => void;
+  /** 항목 행 문서 즉시 저장. 입력 blur/Enter 시 호출. */
+  onCommitRow: (rowId: string) => void;
   onDeleteRow: (rowId: string) => void;
   onMoveRow: (draggedRowId: string, targetRowId: string) => void;
   onUpdateCell: (columnId: string, rowId: string, value: string) => void;
@@ -39,11 +44,13 @@ export function SheetGrid({
   busyId,
   selection,
   onUpdateColumnName,
+  onCommitColumn,
   onDuplicateColumn,
   onDeleteColumn,
   onAddColumn,
   onAddRow,
   onUpdateRow,
+  onCommitRow,
   onDeleteRow,
   onMoveRow,
   onUpdateCell,
@@ -60,10 +67,11 @@ export function SheetGrid({
       <div className="sheetCell sheetHead stickyCol">항목</div>
       {columns.map((column) => (
         <div className="sheetCell sheetHead columnHead" key={column.id}>
-          <input
+          <GridTextInput
             value={column.name}
-            aria-label="열 이름"
-            onChange={(event) => void onUpdateColumnName(column.id, event.target.value)}
+            ariaLabel="열 이름"
+            onChange={(value) => onUpdateColumnName(column.id, value)}
+            onCommit={() => onCommitColumn(column.id)}
           />
           <div className="columnTools">
             <button
@@ -129,13 +137,14 @@ export function SheetGrid({
             >
               <GripVertical size={14} />
             </button>
-            <input
+            <GridTextInput
               value={row.label}
-              aria-label="항목명"
+              ariaLabel="항목명"
               placeholder="항목"
               onFocus={() => selection.focus({ rowId: row.id })}
               onPaste={(event) => onPaste(event, row.id)}
-              onChange={(event) => void onUpdateRow(row.id, event.target.value)}
+              onChange={(value) => onUpdateRow(row.id, value)}
+              onCommit={() => onCommitRow(row.id)}
             />
             <button type="button" title="항목 삭제" onClick={() => void onDeleteRow(row.id)}>
               <Trash2 size={14} />
@@ -155,14 +164,15 @@ export function SheetGrid({
               >
                 <div className={image ? "cellValueWrap hasImage" : "cellValueWrap"}>
                   {image ? null : (
-                    <input
+                    <GridTextInput
                       className="cellTextInput"
                       value={column.values[row.id] ?? ""}
-                      aria-label={`${column.name} ${row.label}`}
+                      ariaLabel={`${column.name} ${row.label}`}
                       placeholder="값 입력"
                       onFocus={() => selection.focus({ rowId: row.id, columnId: column.id })}
                       onPaste={(event) => onPaste(event, row.id, column.id)}
-                      onChange={(event) => void onUpdateCell(column.id, row.id, event.target.value)}
+                      onChange={(value) => onUpdateCell(column.id, row.id, value)}
+                      onCommit={() => onCommitColumn(column.id)}
                     />
                   )}
                   <CellImageControl

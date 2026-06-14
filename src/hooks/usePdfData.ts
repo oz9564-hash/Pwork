@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createDebouncedSaver } from "../lib/debounceSave";
+import { saveStatusStore } from "../lib/saveStatus";
 import { createId } from "../lib/ids";
 import { persist as runPersist } from "../lib/persist";
 import { exportPdf } from "../services/pdfExport";
@@ -34,8 +35,25 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
   const persist = (action: () => Promise<unknown>) => runPersist(action, notifySaveError);
 
   const pdfRowSaver = useRef(
-    createDebouncedSaver<PdfSlotRow>((row) => repository.savePdfRow(row), { onError: notifySaveError }),
+    createDebouncedSaver<PdfSlotRow>((row) => repository.savePdfRow(row), {
+      onError: notifySaveError,
+      status: saveStatusStore,
+      namespace: "pdfrow",
+    }),
   ).current;
+
+  /** 대기 중인 PDF 행 편집을 즉시 기록한다. 인앱 로그아웃 직전 등에서 await 한다. */
+  async function flushPendingSaves() {
+    await pdfRowSaver.flushAll();
+  }
+
+  /** 현재 PDF 행 전체를 Firestore에 즉시 강제 기록한다. 수동 "저장하기"용. */
+  async function saveAllNow() {
+    await pdfRowSaver.bypass(
+      pdfRows.map((row) => row.id),
+      () => Promise.all(pdfRows.map((row) => repository.savePdfRow(row))),
+    );
+  }
 
   // 언마운트/페이지 종료 직전에 남은 PDF 행 편집을 마저 저장한다.
   useEffect(() => {
@@ -275,6 +293,8 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
     font,
     load,
     reset,
+    flushPendingSaves,
+    saveAllNow,
     reloadPdfData,
     areasForPdfRow,
     hasAdjust,

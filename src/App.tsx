@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent } from "react";
 import type { User } from "firebase/auth";
-import { FileText, LogOut } from "lucide-react";
+import { FileText, LogOut, Save } from "lucide-react";
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { PdfMappingSection } from "./components/PdfMappingSection";
+import { SaveStatusIndicator } from "./components/SaveStatusIndicator";
 import { SheetGrid } from "./components/SheetGrid";
 import { StatusOverlays } from "./components/StatusOverlays";
 import type { BusyFeedback, CellImagePreview, UploadNotice } from "./components/StatusOverlays";
@@ -50,6 +51,7 @@ export function App() {
   // undefined = 인증 확인 중, null = 로그아웃 상태, User = 로그인됨
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // 도메인 상태/영속화는 훅으로 분리한다. 토스트·블로킹 오버레이·버튼 busy는 App이 소유하고
   // 콜백으로 내려준다. 선택(useSheetSelection)은 시트 데이터를 읽으므로 그 다음에 만든다.
@@ -93,7 +95,35 @@ export function App() {
     }
   }
 
+  async function handleManualSave() {
+    setSaving(true);
+    try {
+      await Promise.all([sheet.saveAllNow(), pdf.saveAllNow()]);
+      setUploadNotice({
+        tone: "success",
+        title: "저장 완료",
+        description: "변경 내용을 저장했습니다.",
+      });
+    } catch (error) {
+      console.error("[manual-save] failed", error);
+      setUploadNotice({
+        tone: "error",
+        title: "저장 실패",
+        description: "변경 내용을 저장하지 못했습니다. 인터넷 연결을 확인해 주세요.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleSignOut() {
+    // 로그아웃 전에 디바운스 대기 중인 마지막 편집을 확정한다.
+    // signOut 후엔 requireUid()가 throw 해 저장이 실패하므로 반드시 먼저 flush 한다.
+    try {
+      await Promise.all([sheet.flushPendingSaves(), pdf.flushPendingSaves()]);
+    } catch (error) {
+      console.error("[auth] flush before sign out failed", error);
+    }
     await signOutUser();
   }
 
@@ -246,14 +276,27 @@ export function App() {
           <span>{sheet.columns.length}개 열</span>
           <span>{pdfRowsReady}/{pdfRowsWithFile} PDF</span>
           {user ? (
-            <button
-              className="iconButton"
-              type="button"
-              title={`${user.email ?? "사용자"} 로그아웃`}
-              onClick={() => void handleSignOut()}
-            >
-              <LogOut size={16} />
-            </button>
+            <>
+              <SaveStatusIndicator />
+              <button
+                className="button primary saveButton"
+                type="button"
+                disabled={saving}
+                title="변경 내용 저장"
+                onClick={() => void handleManualSave()}
+              >
+                <Save size={16} />
+                {saving ? "저장 중…" : "저장하기"}
+              </button>
+              <button
+                className="iconButton"
+                type="button"
+                title={`${user.email ?? "사용자"} 로그아웃`}
+                onClick={() => void handleSignOut()}
+              >
+                <LogOut size={16} />
+              </button>
+            </>
           ) : null}
         </div>
       </header>
@@ -287,11 +330,13 @@ export function App() {
               busyId={busyId}
               selection={selection}
               onUpdateColumnName={sheet.updateColumnName}
+              onCommitColumn={(columnId) => void sheet.commitColumn(columnId)}
               onDuplicateColumn={(column) => void duplicateColumn(column)}
               onDeleteColumn={(columnId) => void deleteColumn(columnId)}
               onAddColumn={() => void sheet.addColumn()}
               onAddRow={() => void sheet.addRow()}
               onUpdateRow={sheet.updateRow}
+              onCommitRow={(rowId) => void sheet.commitRow(rowId)}
               onDeleteRow={(rowId) => void deleteRow(rowId)}
               onMoveRow={(draggedRowId, targetRowId) => void sheet.moveRow(draggedRowId, targetRowId)}
               onUpdateCell={sheet.updateCell}

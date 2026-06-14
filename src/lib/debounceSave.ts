@@ -1,3 +1,5 @@
+import type { SaveStatusStore } from "./saveStatus";
+
 /**
  * 문서 단위로 저장을 디바운스한다. 같은 key로 짧은 간격에 들어온 변경은
  * 마지막 값 하나만 Firestore에 쓰여 쓰기 횟수와 경합(stale write)을 줄인다.
@@ -12,14 +14,23 @@
  */
 export function createDebouncedSaver<T>(
   saveFn: (value: T) => Promise<void>,
-  options: { delay?: number; onError?: (error: unknown) => void } = {},
+  options: {
+    delay?: number;
+    onError?: (error: unknown) => void;
+    /** 저장 상태 표시용 보고 대상(선택). */
+    status?: SaveStatusStore;
+    /** status에 보고할 때 key 충돌을 막는 네임스페이스(saver별로 다르게). */
+    namespace?: string;
+  } = {},
 ) {
-  const { delay = 600, onError } = options;
+  const { delay = 600, onError, status, namespace = "" } = options;
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const pending = new Map<string, T>();
+  const statusKey = (key: string) => `${namespace}:${key}`;
 
   function schedule(key: string, value: T) {
     pending.set(key, value);
+    status?.markPending(statusKey(key));
     const existing = timers.get(key);
     if (existing) clearTimeout(existing);
     timers.set(
@@ -37,12 +48,18 @@ export function createDebouncedSaver<T>(
     if (!pending.has(key)) return;
     const value = pending.get(key) as T;
     pending.delete(key);
+    status?.clearPending(statusKey(key));
+    status?.beginWrite();
+    let ok = true;
     try {
       await saveFn(value);
     } catch (error) {
       // 저장 실패가 unhandled rejection으로 사라지지 않게 잡아 알린다.
+      ok = false;
       console.error("[debounced-save] failed", error);
       onError?.(error);
+    } finally {
+      status?.endWrite(ok);
     }
   }
 
@@ -51,6 +68,7 @@ export function createDebouncedSaver<T>(
     if (timer) clearTimeout(timer);
     timers.delete(key);
     pending.delete(key);
+    status?.clearPending(statusKey(key));
   }
 
   async function bypass<R>(keys: string | string[], action: () => Promise<R>): Promise<R> {

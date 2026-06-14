@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createDebouncedSaver } from "../lib/debounceSave";
+import { saveStatusStore } from "../lib/saveStatus";
 import { createId } from "../lib/ids";
 import { optimizeImageFile } from "../lib/imageOptimize";
 import { persist as runPersist } from "../lib/persist";
@@ -30,6 +31,18 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
   const [rows, setRows] = useState<FieldRow[]>([]);
   const [columns, setColumns] = useState<ValueColumn[]>([]);
 
+  // 최신 state를 동기적으로 읽기 위한 미러. update*에서 setState updater 안에 의존하면
+  // React 18에선 updater가 나중에 실행돼 직후 코드가 stale을 보므로(저장 예약 누락 버그),
+  // 여기서 ref로 최신값을 들고 즉시 계산한다. 그 외 경로의 변경도 effect로 따라잡는다.
+  const rowsRef = useRef(rows);
+  const columnsRef = useRef(columns);
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+  useEffect(() => {
+    columnsRef.current = columns;
+  }, [columns]);
+
   const notifySaveError = () =>
     notify({
       tone: "error",
@@ -38,12 +51,63 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
     });
   const persist = (action: () => Promise<unknown>) => runPersist(action, notifySaveError);
 
+  // 저장은 blur/Enter 커밋이 1차 경로다. 디바운스 타이머(5초)는 셀에서 안 나가고 멈춰도
+  // 결국 저장되게 하는 안전망. flush가 예약을 지우므로 커밋·타이머가 겹쳐도 쓰기는 1회다.
   const columnSaver = useRef(
-    createDebouncedSaver<ValueColumn>((column) => repository.saveColumn(column), { onError: notifySaveError }),
+    createDebouncedSaver<ValueColumn>((column) => repository.saveColumn(column), {
+      delay: 5000,
+      onError: notifySaveError,
+      status: saveStatusStore,
+      namespace: "col",
+    }),
   ).current;
   const rowSaver = useRef(
-    createDebouncedSaver<FieldRow>((row) => repository.saveRow(row), { onError: notifySaveError }),
+    createDebouncedSaver<FieldRow>((row) => repository.saveRow(row), {
+      delay: 5000,
+      onError: notifySaveError,
+      status: saveStatusStore,
+      namespace: "row",
+    }),
   ).current;
+
+  /**
+   * 대기 중인 디바운스 저장을 즉시 모두 기록한다.
+   * 페이지 종료(beforeunload)뿐 아니라 인앱 로그아웃 직전처럼
+   * "아직 로그인 상태일 때 마지막 편집을 확정"해야 하는 곳에서 await 해야 한다.
+   */
+  async function flushPendingSaves() {
+    await Promise.all([columnSaver.flushAll(), rowSaver.flushAll()]);
+  }
+
+  /** 한 항목 행을 즉시 기록한다(입력 blur/Enter 커밋용). 변경 없으면 no-op. */
+  async function commitRow(rowId: string) {
+    await rowSaver.flush(rowId);
+  }
+
+  /** 한 값 열(이름/셀 값 공용)을 즉시 기록한다(입력 blur/Enter 커밋용). 변경 없으면 no-op. */
+  async function commitColumn(columnId: string) {
+    await columnSaver.flush(columnId);
+  }
+
+  /**
+   * 현재 시트 전체(모든 항목 행 + 값 열)를 Firestore에 즉시 강제 기록한다.
+   * 디바운스를 기다리지 않는 수동 "저장하기"용. 대기 예약을 먼저 걷어내고(bypass)
+   * 최신 state를 통째로 쓰므로, 쓰기가 실제로 성공하는지(권한/네트워크)도 여기서 드러난다.
+   */
+  async function saveAllNow() {
+    await rowSaver.bypass(
+      rows.map((row) => row.id),
+      () =>
+        columnSaver.bypass(
+          columns.map((column) => column.id),
+          () =>
+            Promise.all([
+              ...rows.map((row) => repository.saveRow(row)),
+              ...columns.map((column) => repository.saveColumn(column)),
+            ]),
+        ),
+    );
+  }
 
   // 언마운트/페이지 종료 직전에 남은 행/열 편집을 마저 저장한다.
   useEffect(() => {
@@ -107,12 +171,10 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
   }
 
   function updateRow(rowId: string, label: string) {
-    let changed: FieldRow | undefined;
-    setRows((current) => {
-      const next = current.map((row) => (row.id === rowId ? { ...row, label } : row));
-      changed = next.find((row) => row.id === rowId);
-      return next;
-    });
+    const next = rowsRef.current.map((row) => (row.id === rowId ? { ...row, label } : row));
+    rowsRef.current = next;
+    setRows(next);
+    const changed = next.find((row) => row.id === rowId);
     if (changed) rowSaver.schedule(changed.id, changed);
   }
 
@@ -216,14 +278,12 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
   }
 
   function updateColumnName(columnId: string, name: string) {
-    let changed: ValueColumn | undefined;
-    setColumns((current) => {
-      const next = current.map((column) =>
-        column.id === columnId ? { ...column, name, updatedAt: Date.now() } : column,
-      );
-      changed = next.find((column) => column.id === columnId);
-      return next;
-    });
+    const next = columnsRef.current.map((column) =>
+      column.id === columnId ? { ...column, name, updatedAt: Date.now() } : column,
+    );
+    columnsRef.current = next;
+    setColumns(next);
+    const changed = next.find((column) => column.id === columnId);
     if (changed) columnSaver.schedule(changed.id, changed);
   }
 
@@ -236,16 +296,14 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
   }
 
   function updateCell(columnId: string, rowId: string, value: string) {
-    let changed: ValueColumn | undefined;
-    setColumns((current) => {
-      const next = current.map((column) =>
-        column.id === columnId
-          ? { ...column, values: { ...column.values, [rowId]: value }, updatedAt: Date.now() }
-          : column,
-      );
-      changed = next.find((column) => column.id === columnId);
-      return next;
-    });
+    const next = columnsRef.current.map((column) =>
+      column.id === columnId
+        ? { ...column, values: { ...column.values, [rowId]: value }, updatedAt: Date.now() }
+        : column,
+    );
+    columnsRef.current = next;
+    setColumns(next);
+    const changed = next.find((column) => column.id === columnId);
     if (changed) columnSaver.schedule(changed.id, changed);
   }
 
@@ -406,6 +464,10 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
     columns,
     load,
     reset,
+    flushPendingSaves,
+    saveAllNow,
+    commitRow,
+    commitColumn,
     createStarterSheet,
     addRow,
     updateRow,
