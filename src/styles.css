@@ -1550,8 +1550,9 @@ button:disabled {
   width: 100%;
   overflow: visible;
   white-space: pre-wrap;
+  /* 출력(wrapText)과 동일 규칙: 공백에서 끊고, 단어 하나가 박스보다 넓을 때만 글자 단위 분해. */
+  word-break: keep-all;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
 .areaResizeHandle {
