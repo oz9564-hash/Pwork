@@ -90,7 +90,7 @@ export async function exportPdf(params: ExportPdfParams) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${params.column.name}_${params.fileName.replace(/\.pdf$/i, "")}_filled.pdf`;
+  anchor.download = `${params.column.name}_${params.fileName.replace(/\.pdf$/i, "")}.pdf`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
