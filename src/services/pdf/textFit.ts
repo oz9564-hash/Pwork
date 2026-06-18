@@ -1,8 +1,9 @@
 import type { TextFitMode } from "../../types";
 import { LINE_HEIGHT, wrapText } from "./textLayout";
 
-export const DEFAULT_TEXT_FIT_MODE: TextFitMode = "wrap";
+export const DEFAULT_TEXT_FIT_MODE: TextFitMode = "singleLine";
 export const MIN_TEXT_FIT_FONT_SIZE = 0.1;
+export const TEXT_VISUAL_HEIGHT_RATIO = 0.92;
 const MAX_AUTO_TEXT_FIT_FONT_SIZE = 96;
 
 type TextFitOptions = {
@@ -59,10 +60,10 @@ function fitSingleLineText(
   const line = toSingleLine(text);
   const widthAtMax = measure(line, maxFontSize);
   const widthFitSize = widthAtMax > 0 ? (maxFontSize * maxWidth) / widthAtMax : maxFontSize;
-  const heightFitSize = maxHeight / lineHeight;
+  const heightFitSize = maxHeight / TEXT_VISUAL_HEIGHT_RATIO;
   const target = Math.min(widthFitSize, heightFitSize);
   const fontSize = Math.max(minFontSize, target);
-  const overflow = measure(line, fontSize) > maxWidth + 0.01 || fontSize * lineHeight > maxHeight + 0.01;
+  const overflow = measure(line, fontSize) > maxWidth + 0.01 || fontSize > maxHeight + 0.01;
 
   return { fontSize, lines: [line], overflow };
 }
@@ -78,7 +79,7 @@ function fitWrappedText(
 ): TextFitResult {
   const autoMaxFontSize = Math.min(
     MAX_AUTO_TEXT_FIT_FONT_SIZE,
-    Math.max(maxFontSize, maxHeight / lineHeight, minFontSize),
+    Math.max(maxFontSize, maxHeight / TEXT_VISUAL_HEIGHT_RATIO, minFontSize),
   );
 
   const maxLayout = layoutText(text, "wrap", maxWidth, autoMaxFontSize, measure);
@@ -134,7 +135,7 @@ function fits(
   measure: (text: string, fontSize: number) => number,
 ) {
   const epsilon = 0.01;
-  const height = layout.lines.length * layout.fontSize * lineHeight;
+  const height = getTextBlockHeight(layout.lines.length, layout.fontSize, lineHeight);
   return (
     height <= maxHeight + epsilon &&
     layout.lines.every((line) => measure(line, layout.fontSize) <= maxWidth + epsilon)
@@ -143,4 +144,9 @@ function fits(
 
 function toSingleLine(text: string) {
   return text.replace(/\s*\r?\n\s*/g, " ");
+}
+
+export function getTextBlockHeight(lineCount: number, fontSize: number, lineHeight = LINE_HEIGHT) {
+  if (lineCount <= 0) return 0;
+  return fontSize * TEXT_VISUAL_HEIGHT_RATIO + Math.max(0, lineCount - 1) * fontSize * lineHeight;
 }

@@ -721,27 +721,10 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
 
             {canEdit ? (
               <div className="areaEditor">
-                <div className="railTitle">선택 영역</div>
                 {selectedArea ? (
                   isAdjust ? (
                   <>
                     <label>
-                      좌우 보정(px)
-                      <input
-                        type="number"
-                        value={selectedOverridePx.dx}
-                        onChange={(event) => setOverridePx(selectedArea.id, "dx", Number(event.target.value))}
-                      />
-                    </label>
-                    <label>
-                      상하 보정(px)
-                      <input
-                        type="number"
-                        value={selectedOverridePx.dy}
-                        onChange={(event) => setOverridePx(selectedArea.id, "dy", Number(event.target.value))}
-                      />
-                    </label>
-                    <label>
                       텍스트 맞춤
                       <select
                         value={resolved(selectedArea).textFitMode}
@@ -751,50 +734,62 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         <option value="wrap">줄바꿈</option>
                       </select>
                     </label>
-                    <div className="railTitle">이 칸 크기 (px)</div>
-                    <label>
-                      가로
-                      <input
-                        type="number"
-                        min={1}
-                        value={selectedSizePx.width}
-                        onChange={(event) => setOverrideSizePx(selectedArea.id, "width", Number(event.target.value))}
-                      />
-                    </label>
-                    <label>
-                      세로
-                      <input
-                        type="number"
-                        min={1}
-                        value={selectedSizePx.height}
-                        onChange={(event) => setOverrideSizePx(selectedArea.id, "height", Number(event.target.value))}
-                      />
-                    </label>
-                    <button className="button secondary full" type="button" onClick={() => resetOverrideSize(selectedArea.id)}>
-                      <RotateCcw size={16} />
-                      이 칸 크기 초기화
-                    </button>
-                    <button className="button secondary full" type="button" onClick={resetSelectedOverride}>
-                      <RotateCcw size={16} />
-                      이 칸 보정 초기화
-                    </button>
+                    <details className="editorAccordion">
+                      <summary>선택 영역</summary>
+                      <div className="editorAccordionBody">
+                        <label>
+                          좌우 보정(px)
+                          <input
+                            type="number"
+                            value={selectedOverridePx.dx}
+                            onChange={(event) => setOverridePx(selectedArea.id, "dx", Number(event.target.value))}
+                          />
+                        </label>
+                        <label>
+                          상하 보정(px)
+                          <input
+                            type="number"
+                            value={selectedOverridePx.dy}
+                            onChange={(event) => setOverridePx(selectedArea.id, "dy", Number(event.target.value))}
+                          />
+                        </label>
+                      </div>
+                    </details>
+                    <details className="editorAccordion">
+                      <summary>이 칸 크기 (px)</summary>
+                      <div className="editorAccordionBody">
+                        <label>
+                          가로
+                          <input
+                            type="number"
+                            min={1}
+                            value={selectedSizePx.width}
+                            onChange={(event) => setOverrideSizePx(selectedArea.id, "width", Number(event.target.value))}
+                          />
+                        </label>
+                        <label>
+                          세로
+                          <input
+                            type="number"
+                            min={1}
+                            value={selectedSizePx.height}
+                            onChange={(event) => setOverrideSizePx(selectedArea.id, "height", Number(event.target.value))}
+                          />
+                        </label>
+                        <button className="button secondary full" type="button" onClick={() => resetOverrideSize(selectedArea.id)}>
+                          <RotateCcw size={16} />
+                          이 칸 크기 초기화
+                        </button>
+                        <button className="button secondary full" type="button" onClick={resetSelectedOverride}>
+                          <RotateCcw size={16} />
+                          이 칸 보정 초기화
+                        </button>
+                      </div>
+                    </details>
                   </>
                 ) : (
                   <>
                     <label>
-                      연결 항목
-                      <select
-                        value={selectedArea.rowId}
-                        onChange={(event) => updateSelectedArea({ rowId: event.target.value })}
-                      >
-                        {rows.map((row) => (
-                          <option key={row.id} value={row.id}>
-                            {row.label || "항목 없음"}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
                       텍스트 맞춤
                       <select
                         value={resolved(selectedArea).textFitMode}
@@ -804,10 +799,28 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         <option value="wrap">줄바꿈</option>
                       </select>
                     </label>
-                    <button className="button danger full" type="button" onClick={() => removeArea(selectedAreaId)}>
-                      <Trash2 size={16} />
-                      영역 삭제
-                    </button>
+                    <details className="editorAccordion">
+                      <summary>선택 영역</summary>
+                      <div className="editorAccordionBody">
+                        <label>
+                          연결 항목
+                          <select
+                            value={selectedArea.rowId}
+                            onChange={(event) => updateSelectedArea({ rowId: event.target.value })}
+                          >
+                            {rows.map((row) => (
+                              <option key={row.id} value={row.id}>
+                                {row.label || "항목 없음"}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button className="button danger full" type="button" onClick={() => removeArea(selectedAreaId)}>
+                          <Trash2 size={16} />
+                          영역 삭제
+                        </button>
+                      </div>
+                    </details>
                   </>
                 )
                 ) : (
