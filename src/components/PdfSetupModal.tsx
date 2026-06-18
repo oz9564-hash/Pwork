@@ -8,7 +8,7 @@ import { repository } from "../services/storage";
 import { renderFilledPdf } from "../services/pdfExport";
 import { resolveAreaKind } from "../services/pdf/areaKind";
 import { resolveArea } from "../services/pdf/geometry";
-import { LINE_HEIGHT } from "../services/pdf/textLayout";
+import { LINE_HEIGHT, wrapText } from "../services/pdf/textLayout";
 import type { AreaOverride, ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -880,6 +880,8 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                   {pageAreas.map((area) => {
                     const box = resolved(area);
                     const isImg = isImageArea(area);
+                    const value = getAreaValue(area.rowId);
+                    const textLines = isImg ? [] : measureOverlayTextLines(value, box.fontSize, box.width * size.width);
                     return (
                       <div
                         className={[
@@ -909,9 +911,15 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         onPointerDown={(event) => startDrag(event, area)}
                       >
                         {isImg && imageUrls[area.rowId] ? (
-                          <img src={imageUrls[area.rowId]} alt={getAreaValue(area.rowId)} />
+                          <img src={imageUrls[area.rowId]} alt={value} />
                         ) : (
-                          <span className="areaLabel">{getAreaValue(area.rowId)}</span>
+                          <span className="areaLabel">
+                            {textLines.map((line, index) => (
+                              <span className="areaLabelLine" key={index}>
+                                {line || "\u00a0"}
+                              </span>
+                            ))}
+                          </span>
                         )}
                         {!isAdjust ? (
                           <button
@@ -981,6 +989,14 @@ function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
   const measuredWidth = context?.measureText(text).width ?? text.length * displayFontSize;
   const pixelWidth = Math.max(18, measuredWidth + 14);
   return clamp(pixelWidth / pageWidth, 0.02, 0.9);
+}
+
+function measureOverlayTextLines(text: string, fontSize: number, maxWidth: number) {
+  const displayFontSize = fontSize * DISPLAY_SCALE;
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (context) context.font = `${displayFontSize}px ${AREA_FONT_FAMILY}`;
+  return wrapText(text, maxWidth, (value) => context?.measureText(value).width ?? value.length * displayFontSize);
 }
 
 function measureAreaHeight(fontSize: number, pageHeight: number) {
