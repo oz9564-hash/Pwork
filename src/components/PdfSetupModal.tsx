@@ -520,6 +520,18 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     );
   }
 
+  function updateSelectedFontSize(fontSize: number) {
+    if (!selectedAreaId) return;
+
+    const height = measureAreaHeight(fontSize, size.height);
+    if (isAdjust) {
+      patchOverride(selectedAreaId, { fontSize, height });
+      return;
+    }
+
+    updateSelectedArea({ fontSize, height });
+  }
+
   function removeArea(id: string) {
     setAreas((current) => current.filter((area) => area.id !== id));
     setSelectedAreaId((current) => (current === id ? "" : current));
@@ -739,11 +751,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         onChange={(event) => {
                           // 기준 모드와 동일한 패턴: 글자 크기를 바꾸면 박스 높이도 한 줄에 맞춰 다시 잡는다.
                           // 이 열에서만 적용되는 덮어쓰기(다른 필드는 병합으로 보존).
-                          const fontSize = Number(event.target.value);
-                          patchOverride(selectedArea.id, {
-                            fontSize,
-                            height: measureAreaHeight(fontSize, size.height),
-                          });
+                          updateSelectedFontSize(Number(event.target.value));
                         }}
                       />
                     </label>
@@ -800,8 +808,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                         onChange={(event) => {
                           // 폰트 크기를 바꾸면 박스 높이도 한 줄에 맞춰 다시 잡는다.
                           // (안 그러면 height가 옛 폰트 기준으로 남아 편집(auto)·출력이 어긋난다.)
-                          const fontSize = Number(event.target.value);
-                          updateSelectedArea({ fontSize, height: measureAreaHeight(fontSize, size.height) });
+                          updateSelectedFontSize(Number(event.target.value));
                         }}
                       />
                     </label>
