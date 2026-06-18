@@ -1,29 +1,39 @@
 import { rgb } from "pdf-lib";
-import { LINE_HEIGHT, wrapText } from "../textLayout";
+import { fitText } from "../textFit";
+import { LINE_HEIGHT } from "../textLayout";
 import type { AreaRenderer } from "./types";
 
 /**
- * 텍스트 셀을 그린다. 글자 크기는 유지하고, 영역 폭을 넘으면 다음 줄로 자동 줄바꿈한다.
+ * 텍스트 셀을 그린다. fitText가 박스와 맞춤 모드에 맞춰 줄과 글자 크기를 계산한다.
  * 줄바꿈 위치는 실제 임베드 폰트 폭으로 계산하므로 미리보기(실제 PDF 렌더) = 출력이 보장된다.
  */
 export const textRenderer: AreaRenderer = {
   kind: "text",
-  render({ page, rect, fontSize, column, row, font }) {
+  render({ page, rect, fontSize, textFitMode, column, row, font }) {
     const text = column.values[row.id] ?? "";
     if (!text) return;
 
-    const size = fontSize;
+    const fit = fitText({
+      text,
+      mode: textFitMode,
+      maxWidth: rect.width,
+      maxHeight: rect.height,
+      maxFontSize: fontSize,
+      measure: (value, size) => font.widthOfTextAtSize(value, size),
+    });
+
+    const size = fit.fontSize;
     const lineGap = size * LINE_HEIGHT;
-    // 위치 기준은 박스 "상단" 고정. 줄바꿈된 줄은 아래로 계속 그려 박스가 글을 감싸듯 늘어난다
-    // (편집 오버레이의 height:auto + minHeight 와 동일한 모델 → 편집 = 출력).
+    // 위치 기준은 박스 "상단" 고정. fitText가 계산한 줄과 크기를 그대로 그린다.
     const boxTop = rect.y + rect.height; // 박스 상단(pdf y, 원점 좌하단)
-    const lines = wrapText(text, rect.width, (s) => font.widthOfTextAtSize(s, size));
+    const lines = fit.lines;
 
     // [diag] 출력 텍스트 렌더(한 줄 문자열, 콘솔 잘림 방지).
     console.log(
       `[diag:textRender] "${text}" size=${size} rect x=${rect.x.toFixed(1)} y=${rect.y.toFixed(1)} ` +
         `w=${rect.width.toFixed(1)} h=${rect.height.toFixed(1)} ` +
-        `right=${(rect.x + rect.width).toFixed(1)} lineCount=${lines.length} lines=${JSON.stringify(lines)} ` +
+        `right=${(rect.x + rect.width).toFixed(1)} mode=${textFitMode} fitSize=${size.toFixed(2)} ` +
+        `lineCount=${lines.length} lines=${JSON.stringify(lines)} ` +
         `textW=${font.widthOfTextAtSize(text, size).toFixed(1)}`,
     );
 

@@ -1483,10 +1483,7 @@ button:disabled {
   user-select: none;
 }
 
-/* 텍스트 영역: 내용(줄바꿈)에 맞춰 높이가 늘어나며 글을 감싼다. 가로는 고정(줄바꿈 경계),
-   세로는 minHeight 이상 auto-grow → 출력 렌더러(상단 기준, 줄을 아래로 그림)와 동일하게 동작. */
 .mappedArea.textArea {
-  height: auto;
   overflow: visible;
 }
 
@@ -1537,12 +1534,11 @@ button:disabled {
   pointer-events: none;
 }
 
-/* 내용 텍스트 전용. span 일반 선택자는 리사이즈 핸들 span까지 먹어서 클래스로 좁힌다.
-   박스 가로폭에서 줄바꿈하고, 줄이 늘면 박스(height:auto)가 따라 늘어난다. */
 .mappedArea .areaLabel {
+  display: block;
   width: 100%;
-  overflow: visible;
-  /* 출력(wrapText)과 동일 규칙: 공백에서 끊고, 단어 하나가 박스보다 넓을 때만 글자 단위 분해. */
+  height: 100%;
+  overflow: hidden;
 }
 
 .mappedArea .areaLabelLine {

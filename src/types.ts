@@ -38,6 +38,7 @@ export type PdfSlotRow = {
 
 /** 영역을 렌더링하는 방식. 보통은 셀 내용에서 파생되지만 명시 지정도 가능하다. */
 export type PdfAreaKind = "text" | "image";
+export type TextFitMode = "singleLine" | "wrap";
 
 /**
  * 기준 영역. "어떤 항목(rowId)을 PDF 어디에(x/y/크기/페이지) 찍을지"의 원본 레이아웃.
@@ -53,6 +54,7 @@ export type PdfArea = {
   width: number;
   height: number;
   fontSize: number;
+  textFitMode?: TextFitMode;
   /**
    * 렌더 타입. 보통은 (영역 row × 열 셀 내용)에서 파생되므로 비워 둔다.
    * 값이 있으면 파생보다 우선한다. (하위호환: 기존 문서엔 없음)
@@ -64,7 +66,8 @@ export type PdfArea = {
  * 열별 개별 영역 보정. 기준 영역(PdfArea) 위에 이 열에서만 덧씌운다.
  * - dx/dy: 위치 오프셋(정규화)
  * - width/height: 박스 크기 덮어쓰기(정규화). 있으면 기준 크기를 대체한다.
- * - fontSize: 글자 크기 덮어쓰기(pt). 있으면 기준 글자 크기를 대체한다.
+ * - fontSize: 최대 글자 크기 덮어쓰기(pt). 있으면 기준 최대 크기를 대체한다.
+ * - textFitMode: 한줄/줄바꿈 맞춤 방식 덮어쓰기.
  *
  * 모두 선택값이다(없으면 기준값 사용).
  * 기존 저장 데이터({dx, dy})와 하위호환된다.
@@ -75,6 +78,7 @@ export type AreaOverride = {
   width?: number;
   height?: number;
   fontSize?: number;
+  textFitMode?: TextFitMode;
 };
 
 /**

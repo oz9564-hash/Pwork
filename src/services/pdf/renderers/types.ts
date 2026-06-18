@@ -1,5 +1,5 @@
 import type { PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import type { FieldRow, PdfArea, PdfAreaKind, ValueColumn } from "../../../types";
+import type { FieldRow, PdfArea, PdfAreaKind, TextFitMode, ValueColumn } from "../../../types";
 import type { PageRect } from "../geometry";
 
 /** 한 영역을 그릴 때 렌더러에 전달되는 모든 컨텍스트. */
@@ -9,8 +9,9 @@ export type AreaRenderContext = {
   area: PdfArea;
   /** 보정까지 반영된 pdf-lib 페이지 좌표(원점 좌하단). */
   rect: PageRect;
-  /** 보정까지 반영된 글자 크기(pt). area.fontSize 대신 이 값을 쓴다(열별 덮어쓰기 반영). */
+  /** 보정까지 반영된 최대 글자 크기(pt). 실제 출력 크기는 fitText가 박스에 맞춰 계산한다. */
   fontSize: number;
+  textFitMode: TextFitMode;
   column: ValueColumn;
   row: FieldRow;
   font: PDFFont;

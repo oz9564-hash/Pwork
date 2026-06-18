@@ -55,6 +55,7 @@ export async function renderFilledPdf({
     if (!row) continue;
 
     const { width: pageWidth, height: pageHeight } = page.getSize();
+    const resolvedArea = resolveArea(area, adjust);
     const rect = toPageRect(area, adjust, pageWidth, pageHeight);
     const kind = resolveAreaKind(area, column);
 
@@ -71,7 +72,8 @@ export async function renderFilledPdf({
       page,
       area,
       rect,
-      fontSize: resolveArea(area, adjust).fontSize,
+      fontSize: resolvedArea.fontSize,
+      textFitMode: resolvedArea.textFitMode,
       column,
       row,
       font,

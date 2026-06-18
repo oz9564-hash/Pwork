@@ -1,4 +1,5 @@
-import type { ColumnPdfAdjust, PdfArea } from "../../types";
+import type { ColumnPdfAdjust, PdfArea, TextFitMode } from "../../types";
+import { DEFAULT_TEXT_FIT_MODE } from "./textFit";
 
 /** 기준 영역 + 열별 보정(위치·크기)을 합친 최종 정규화 영역(0~1). */
 export type ResolvedArea = {
@@ -7,6 +8,7 @@ export type ResolvedArea = {
   width: number;
   height: number;
   fontSize: number;
+  textFitMode: TextFitMode;
 };
 
 /**
@@ -23,6 +25,7 @@ export function resolveArea(area: PdfArea, adjust?: ColumnPdfAdjust): ResolvedAr
     width: override?.width ?? area.width,
     height: override?.height ?? area.height,
     fontSize: override?.fontSize ?? area.fontSize,
+    textFitMode: override?.textFitMode ?? area.textFitMode ?? DEFAULT_TEXT_FIT_MODE,
   };
 }
 

@@ -8,8 +8,9 @@ import { repository } from "../services/storage";
 import { renderFilledPdf } from "../services/pdfExport";
 import { resolveAreaKind } from "../services/pdf/areaKind";
 import { resolveArea } from "../services/pdf/geometry";
-import { LINE_HEIGHT, wrapText } from "../services/pdf/textLayout";
-import type { AreaOverride, ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
+import { DEFAULT_TEXT_FIT_MODE, fitText, MIN_TEXT_FIT_FONT_SIZE } from "../services/pdf/textFit";
+import { LINE_HEIGHT } from "../services/pdf/textLayout";
+import type { AreaOverride, ColumnPdfAdjust, FieldRow, FontAsset, PdfArea, PdfSlotRow, TextFitMode, ValueColumn } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.mjs",
@@ -428,8 +429,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     return resolveArea(area, isAdjust ? adjust : undefined);
   }
 
-  // 박스 크기는 사용자가 직접 조절한 값을 그대로 쓴다(텍스트 폭에 강제로 맞추지 않음).
-  // → 텍스트는 박스 폭에서 줄바꿈, 이미지는 박스 안에 contain 된다.
+  // 박스 크기는 사용자가 직접 조절한 값을 그대로 쓰고, 텍스트는 박스 안에 맞춘다.
   const normalizedAreas = areas;
   const pageAreas = useMemo(() => normalizedAreas.filter((area) => area.page === page), [normalizedAreas, page]);
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
@@ -457,6 +457,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       width,
       height,
       fontSize: DEFAULT_FONT_SIZE,
+      textFitMode: DEFAULT_TEXT_FIT_MODE,
       // kind는 일부러 비워 둔다. 타입은 (이 영역 row × 열 셀 내용)에서 파생되므로
       // 명시값을 박으면 이미지가 올라온 열에서도 text로 굳어 버린다.
     };
@@ -520,16 +521,15 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     );
   }
 
-  function updateSelectedFontSize(fontSize: number) {
+  function updateSelectedTextFitMode(textFitMode: TextFitMode) {
     if (!selectedAreaId) return;
 
-    const height = measureAreaHeight(fontSize, size.height);
     if (isAdjust) {
-      patchOverride(selectedAreaId, { fontSize, height });
+      patchOverride(selectedAreaId, { textFitMode });
       return;
     }
 
-    updateSelectedArea({ fontSize, height });
+    updateSelectedArea({ textFitMode });
   }
 
   function removeArea(id: string) {
@@ -563,12 +563,12 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     patchOverride(areaId, axis === "width" ? { width: value } : { height: value });
   }
 
-  /** 이 칸의 크기 덮어쓰기(박스·글자)만 제거(위치 보정은 유지) → 기준 크기로 복귀. */
+  /** 이 칸의 박스 크기 덮어쓰기만 제거(위치/글자 보정은 유지) → 기준 크기로 복귀. */
   function resetOverrideSize(areaId: string) {
     setAdjust((current) => {
       const prev = current.overrides[areaId];
       if (!prev) return current;
-      const { width: _w, height: _h, fontSize: _f, ...rest } = prev;
+      const { width: _w, height: _h, ...rest } = prev;
       return { ...current, overrides: { ...current.overrides, [areaId]: rest } };
     });
   }
@@ -742,18 +742,14 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                       />
                     </label>
                     <label>
-                      크기
-                      <input
-                        type="number"
-                        min={6}
-                        max={48}
-                        value={resolved(selectedArea).fontSize}
-                        onChange={(event) => {
-                          // 기준 모드와 동일한 패턴: 글자 크기를 바꾸면 박스 높이도 한 줄에 맞춰 다시 잡는다.
-                          // 이 열에서만 적용되는 덮어쓰기(다른 필드는 병합으로 보존).
-                          updateSelectedFontSize(Number(event.target.value));
-                        }}
-                      />
+                      텍스트 맞춤
+                      <select
+                        value={resolved(selectedArea).textFitMode}
+                        onChange={(event) => updateSelectedTextFitMode(event.target.value as TextFitMode)}
+                      >
+                        <option value="singleLine">한줄</option>
+                        <option value="wrap">줄바꿈</option>
+                      </select>
                     </label>
                     <div className="railTitle">이 칸 크기 (px)</div>
                     <label>
@@ -799,18 +795,14 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                       </select>
                     </label>
                     <label>
-                      크기
-                      <input
-                        type="number"
-                        min={6}
-                        max={48}
-                        value={selectedArea.fontSize}
-                        onChange={(event) => {
-                          // 폰트 크기를 바꾸면 박스 높이도 한 줄에 맞춰 다시 잡는다.
-                          // (안 그러면 height가 옛 폰트 기준으로 남아 편집(auto)·출력이 어긋난다.)
-                          updateSelectedFontSize(Number(event.target.value));
-                        }}
-                      />
+                      텍스트 맞춤
+                      <select
+                        value={resolved(selectedArea).textFitMode}
+                        onChange={(event) => updateSelectedTextFitMode(event.target.value as TextFitMode)}
+                      >
+                        <option value="singleLine">한줄</option>
+                        <option value="wrap">줄바꿈</option>
+                      </select>
                     </label>
                     <button className="button danger full" type="button" onClick={() => removeArea(selectedAreaId)}>
                       <Trash2 size={16} />
@@ -881,7 +873,16 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                     const box = resolved(area);
                     const isImg = isImageArea(area);
                     const value = getAreaValue(area.rowId);
-                    const textLines = isImg ? [] : measureOverlayTextLines(value, box.fontSize, box.width * size.width);
+                    const textFit = isImg
+                      ? undefined
+                      : measureOverlayTextFit(
+                          value,
+                          box.textFitMode,
+                          box.fontSize,
+                          box.width * size.width,
+                          box.height * size.height,
+                        );
+                    const textLines = textFit?.lines ?? [];
                     return (
                       <div
                         className={[
@@ -896,17 +897,8 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                           left: box.x * size.width,
                           top: box.y * size.height,
                           width: box.width * size.width,
-                          // 이미지: contain 기준이라 높이 고정.
-                          // 텍스트: 한 줄(minHeight) 이상이면 내용에 맞춰 세로로 늘어나 줄바꿈을 감싼다(출력 렌더러와 동일).
-                          ...(isImg
-                            ? { height: box.height * size.height }
-                            : {
-                                minHeight: Math.max(
-                                  box.height * size.height,
-                                  box.fontSize * DISPLAY_SCALE * LINE_HEIGHT,
-                                ),
-                              }),
-                          fontSize: box.fontSize * DISPLAY_SCALE,
+                          height: box.height * size.height,
+                          fontSize: textFit?.fontSize ?? box.fontSize * DISPLAY_SCALE,
                         }}
                         onPointerDown={(event) => startDrag(event, area)}
                       >
@@ -991,12 +983,29 @@ function measureAreaWidth(text: string, fontSize: number, pageWidth: number) {
   return clamp(pixelWidth / pageWidth, 0.02, 0.9);
 }
 
-function measureOverlayTextLines(text: string, fontSize: number, maxWidth: number) {
-  const displayFontSize = fontSize * DISPLAY_SCALE;
+function measureOverlayTextFit(
+  text: string,
+  mode: TextFitMode,
+  maxFontSize: number,
+  maxWidth: number,
+  maxHeight: number,
+) {
+  const displayFontSize = maxFontSize * DISPLAY_SCALE;
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (context) context.font = `${displayFontSize}px ${AREA_FONT_FAMILY}`;
-  return wrapText(text, maxWidth, (value) => context?.measureText(value).width ?? value.length * displayFontSize);
+  return fitText({
+    text,
+    mode,
+    maxWidth,
+    maxHeight,
+    maxFontSize: displayFontSize,
+    minFontSize: MIN_TEXT_FIT_FONT_SIZE * DISPLAY_SCALE,
+    measure: (value, fontSize) => {
+      if (context) context.font = `${fontSize}px ${AREA_FONT_FAMILY}`;
+      return context?.measureText(value).width ?? value.length * fontSize;
+    },
+  });
 }
 
 function measureAreaHeight(fontSize: number, pageHeight: number) {
