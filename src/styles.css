@@ -540,17 +540,10 @@ button:disabled {
 
 
 .cellImageButton {
-  min-width: calc(86px * var(--sheet-zoom));
+  width: var(--sheet-control-height);
   border-color: var(--border-dashed);
   background: var(--bg-surface);
   color: var(--primary-hover);
-}
-
-.cellImageButton span {
-  max-width: calc(62px * var(--sheet-zoom));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .cellImageCard {

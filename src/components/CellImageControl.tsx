@@ -79,7 +79,6 @@ export function CellImageControl({ image, onSelect, onPreview, onClear }: CellIm
       ) : (
         <button className="cellImageButton" type="button" title="이미지 넣기" onClick={() => inputRef.current?.click()}>
           <ImageIcon size={14} />
-          <span>Image</span>
         </button>
       )}
       <input
