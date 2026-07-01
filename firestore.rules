@@ -2,7 +2,19 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 본인(uid) 데이터에만 읽기/쓰기 허용
+    // 본인 프로필(소속 카테고리)에만 접근 가능
+    match /userProfiles/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // 같은 카테고리(팀) 멤버가 공유하는 워크스페이스 데이터.
+    // 본인 프로필의 category가 경로의 category와 같을 때만 허용.
+    match /categories/{category}/{document=**} {
+      allow read, write: if request.auth != null
+        && get(/databases/$(database)/documents/userProfiles/$(request.auth.uid)).data.category == category;
+    }
+
+    // 기존 사용자별 데이터(마이그레이션 원본 백업). 본인만 접근.
     match /users/{uid}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }

@@ -89,7 +89,6 @@
 
 body {
   margin: 0;
-  min-width: 960px;
 }
 
 button,
@@ -114,6 +113,9 @@ button:disabled {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  /* 스프레드시트 격자는 좁은 화면에서 찌그러지지 않도록 최소 폭을 유지한다.
+     (워크스페이스 목록·로그인·카테고리 화면은 반응형이라 min-width를 적용하지 않는다.) */
+  min-width: 960px;
   padding: 18px 20px 20px;
   gap: var(--space-4);
 }
@@ -145,18 +147,21 @@ button:disabled {
 }
 
 .topBar h1,
+.workspaceTopBar h1,
 .modalHeader h2 {
   margin: 0;
   color: var(--text);
 }
 
-.topBar h1 {
+.topBar h1,
+.workspaceTopBar h1 {
   font-size: 21px;
   font-weight: var(--fw-bold);
   letter-spacing: 0;
 }
 
 .topBar p,
+.workspaceTopBar p,
 .modalHeader p {
   margin: 3px 0 0;
   color: var(--text-muted);
@@ -1728,4 +1733,215 @@ button:disabled {
 
 .authCard .button {
   margin-top: var(--space-2);
+}
+
+/* =========================================================================
+   Workspace list
+   ========================================================================= */
+.workspaceShell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 18px 20px 20px;
+  gap: var(--space-4);
+}
+
+.workspaceTopBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 58px;
+  padding: 0 2px;
+}
+
+.workspacePanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.workspaceCreate {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.workspaceCreateInput {
+  flex: 1;
+  /* 카테고리 입력 화면(세로 배치)에서도 카드 폭을 꽉 채우고, 긴 입력에도 줄어들 수 있게 한다. */
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  background: var(--bg-surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.workspaceCreateInput:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.workspaceEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 240px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  color: var(--text-muted);
+  font-size: var(--fs-base);
+  text-align: center;
+  padding: var(--space-5);
+}
+
+.workspaceEmpty svg {
+  color: var(--primary);
+}
+
+.workspaceEmptyHint {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* 헤더 제목 옆 소속 카테고리(팀) 배지 */
+.categoryChip {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: rgb(37 99 235 / 0.1);
+  color: var(--primary);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  vertical-align: middle;
+}
+
+.workspaceGrid {
+  display: grid;
+  /* min(240px, 100%): 뷰포트가 240px보다 좁아도 열이 넘쳐 가로 스크롤이 생기지 않게 한다. */
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  gap: var(--space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workspaceCard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* 보기/이름수정 모드에서 카드 높이가 동일하도록 최소 높이를 고정(레이아웃 점프 방지). */
+  min-height: 68px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow 0.12s ease, border-color 0.12s ease, transform 0.12s ease;
+}
+
+.workspaceCard:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.workspaceCard.isEditing {
+  border-color: var(--primary);
+}
+
+.workspaceCardOpen {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-base);
+  text-align: left;
+}
+
+.workspaceCardIcon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  background: rgb(37 99 235 / 0.1);
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.workspaceCardIcon svg {
+  color: var(--primary);
+}
+
+.workspaceCardName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceCardActions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+/* 카드 안 아이콘 버튼(수정/삭제/저장/취소). 전역 .iconButton과 분리해 카드에서만 가볍게 보이도록 한다. */
+.workspaceCardAction {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.workspaceCardAction svg {
+  color: inherit;
+}
+
+.workspaceCardAction:not(:disabled):hover {
+  background: var(--bg-muted);
+  color: var(--text);
+}
+
+.workspaceCardAction.danger:not(:disabled):hover {
+  background: rgb(220 38 38 / 0.1);
+  color: var(--danger);
+}
+
+.workspaceCardAction.confirm:not(:disabled):hover {
+  background: rgb(37 99 235 / 0.1);
+  color: var(--primary);
+}
+
+.workspaceCardAction:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.workspaceCardEdit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
 }

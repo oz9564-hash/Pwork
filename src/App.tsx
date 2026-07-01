@@ -1,20 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent } from "react";
 import type { User } from "firebase/auth";
-import { FileText, LogOut, Save } from "lucide-react";
+import { ArrowLeft, FileText, LogOut, Save } from "lucide-react";
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { PdfMappingSection } from "./components/PdfMappingSection";
 import { SaveStatusIndicator } from "./components/SaveStatusIndicator";
 import { SheetGrid } from "./components/SheetGrid";
 import { StatusOverlays } from "./components/StatusOverlays";
 import type { BusyFeedback, CellImagePreview, UploadNotice } from "./components/StatusOverlays";
+import { WorkspaceList } from "./components/WorkspaceList";
+import { CategorySetup } from "./components/CategorySetup";
 import { useSheetSelection } from "./hooks/useSheetSelection";
 import { useSheetData } from "./hooks/useSheetData";
 import { usePdfData } from "./hooks/usePdfData";
-import { saveStatusStore } from "./lib/saveStatus";
+import { saveStatusStore, useSaveStatus } from "./lib/saveStatus";
 import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
-import { repository } from "./services/storage";
-import type { PdfSlotRow, ValueColumn } from "./types";
+import {
+  clearActiveWorkspace as clearRepoWorkspace,
+  repository,
+  setActiveWorkspace as setRepoWorkspace,
+} from "./services/storage";
+import type { PdfSlotRow, UserProfile, ValueColumn, Workspace } from "./types";
 
 /** 기준 편집(column 없음) 또는 열 미세조정(column 있음) 모달 대상. */
 type ActiveSetup = {
@@ -53,6 +59,13 @@ export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  // undefined = 프로필 확인 중, null = 미설정(카테고리 입력 필요), UserProfile = 설정됨
+  const [profile, setProfile] = useState<UserProfile | null | undefined>(undefined);
+  // 로그인 후 (카테고리의) 워크스페이스 목록 → 선택 시 격자. activeWorkspace가 null이면 목록 화면.
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const saveState = useSaveStatus();
 
   // 도메인 상태/영속화는 훅으로 분리한다. 토스트·블로킹 오버레이·버튼 busy는 App이 소유하고
   // 콜백으로 내려준다. 선택(useSheetSelection)은 시트 데이터를 읽으므로 그 다음에 만든다.
@@ -88,18 +101,65 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [uploadNotice]);
 
+  // 로그인하면 먼저 프로필(소속 카테고리)을 불러온다. 없으면 카테고리 입력 화면으로 보낸다.
   useEffect(() => {
     if (user || SKIP_LOGIN) {
-      selection.clear();
-      void Promise.all([sheet.load(), pdf.load()]);
+      setProfile(undefined);
+      void (async () => {
+        try {
+          setProfile((await repository.getProfile()) ?? null);
+        } catch (error) {
+          console.error("[profile] load failed", error);
+          setProfile(null);
+          setUploadNotice({
+            tone: "error",
+            title: "프로필 불러오기 실패",
+            description: "다시 로그인하거나 잠시 후 시도해 주세요.",
+          });
+        }
+      })();
       return;
     }
-    // 로그아웃 시 메모리에 남은 데이터를 비운다.
+    // 로그아웃 시 메모리에 남은 데이터·컨텍스트를 모두 비운다.
     sheet.reset();
     pdf.reset();
     selection.clear();
+    setProfile(undefined);
+    setWorkspaces([]);
+    setActiveWorkspace(null);
+    clearRepoWorkspace();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // 카테고리가 정해지면 그 카테고리의 공유 워크스페이스 목록을 불러온다.
+  useEffect(() => {
+    if (!profile?.category) return;
+    void (async () => {
+      try {
+        setWorkspaces(await repository.listWorkspaces(profile.category));
+      } catch (error) {
+        console.error("[workspace] list failed", error);
+        setUploadNotice({
+          tone: "error",
+          title: "워크스페이스 불러오기 실패",
+          description: "목록을 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.",
+        });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.category]);
+
+  // 워크스페이스를 열면 그때 저장소 컨텍스트(카테고리+워크스페이스)를 지정하고 데이터를 불러온다.
+  // (reset을 먼저 해 이전 워크스페이스 데이터가 잠깐 비치는 것을 막는다.)
+  useEffect(() => {
+    if (!activeWorkspace || !profile?.category) return;
+    setRepoWorkspace(profile.category, activeWorkspace.id);
+    selection.clear();
+    sheet.reset();
+    pdf.reset();
+    void Promise.all([sheet.load(), pdf.load()]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWorkspace]);
 
   async function handleSignIn() {
     setAuthBusy(true);
@@ -142,6 +202,72 @@ export function App() {
       console.error("[auth] flush before sign out failed", error);
     }
     await signOutUser();
+  }
+
+  async function saveCategory(category: string) {
+    try {
+      setProfile(await repository.saveProfile(category));
+    } catch (error) {
+      console.error("[profile] save failed", error);
+      setUploadNotice({ tone: "error", title: "카테고리 저장 실패", description: "다시 시도해 주세요." });
+    }
+  }
+
+  function openWorkspace(workspace: Workspace) {
+    setActiveWorkspace(workspace);
+  }
+
+  // 워크스페이스를 떠나기 전 대기 중인 저장을 확정하고 컨텍스트를 비운다(다른 워크스페이스로의 저장 누수 방지).
+  async function leaveWorkspace() {
+    setLeaving(true);
+    try {
+      await Promise.all([sheet.flushPendingSaves(), pdf.flushPendingSaves()]);
+    } catch (error) {
+      console.error("[workspace] flush before leave failed", error);
+    } finally {
+      sheet.reset();
+      pdf.reset();
+      selection.clear();
+      clearRepoWorkspace();
+      setActiveWorkspace(null);
+      setLeaving(false);
+    }
+  }
+
+  async function createWorkspace(name: string) {
+    if (!profile?.category) return;
+    try {
+      const workspace = await repository.createWorkspace(profile.category, name);
+      setWorkspaces((current) => [...current, workspace].sort((a, b) => a.createdAt - b.createdAt));
+      setActiveWorkspace(workspace);
+    } catch (error) {
+      console.error("[workspace] create failed", error);
+      setUploadNotice({ tone: "error", title: "워크스페이스 생성 실패", description: "다시 시도해 주세요." });
+    }
+  }
+
+  async function renameWorkspace(workspace: Workspace, name: string) {
+    if (!profile?.category) return;
+    try {
+      await repository.renameWorkspace(profile.category, workspace.id, name);
+      setWorkspaces((current) =>
+        current.map((item) => (item.id === workspace.id ? { ...item, name, updatedAt: Date.now() } : item)),
+      );
+    } catch (error) {
+      console.error("[workspace] rename failed", error);
+      setUploadNotice({ tone: "error", title: "이름 변경 실패", description: "다시 시도해 주세요." });
+    }
+  }
+
+  async function deleteWorkspace(workspace: Workspace) {
+    if (!profile?.category) return;
+    try {
+      await repository.deleteWorkspace(profile.category, workspace.id);
+      setWorkspaces((current) => current.filter((item) => item.id !== workspace.id));
+    } catch (error) {
+      console.error("[workspace] delete failed", error);
+      setUploadNotice({ tone: "error", title: "삭제 실패", description: "다시 시도해 주세요." });
+    }
   }
 
   useEffect(() => {
@@ -276,15 +402,63 @@ export function App() {
     );
   }
 
+  if (profile === undefined) {
+    return (
+      <main className="authShell">
+        <div className="authCard">
+          <FileText size={28} />
+          <p>불러오는 중</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (profile === null) {
+    return (
+      <CategorySetup
+        userEmail={user?.email}
+        onSubmit={saveCategory}
+        onSignOut={() => void handleSignOut()}
+      />
+    );
+  }
+
+  if (!activeWorkspace) {
+    return (
+      <WorkspaceList
+        workspaces={workspaces}
+        category={profile.category}
+        userEmail={user?.email}
+        onOpen={openWorkspace}
+        onCreate={createWorkspace}
+        onRename={renameWorkspace}
+        onDelete={deleteWorkspace}
+        onSignOut={() => void handleSignOut()}
+      />
+    );
+  }
+
+  // 진행 중인 즉시 쓰기/저장이 있는 동안엔 화면 이탈을 막아 저장 누수 창을 닫는다.
+  const switchingBlocked = leaving || saving || Boolean(busyId) || saveState === "saving";
+
   return (
     <main className="appShell">
       <header className="topBar">
         <div className="brand">
+          <button
+            className="iconButton"
+            type="button"
+            title="워크스페이스 목록으로"
+            disabled={switchingBlocked}
+            onClick={() => void leaveWorkspace()}
+          >
+            <ArrowLeft size={16} />
+          </button>
           <span className="brandMark" aria-hidden="true">
             <FileText size={20} />
           </span>
           <div className="brandText">
-            <h1>PDF 텍스트 매퍼</h1>
+            <h1>{activeWorkspace.name}</h1>
             <p>값 열을 입력해 작업 세트로 관리합니다.</p>
           </div>
         </div>
@@ -309,6 +483,7 @@ export function App() {
                 className="iconButton"
                 type="button"
                 title={`${user.email ?? "사용자"} 로그아웃`}
+                disabled={switchingBlocked}
                 onClick={() => void handleSignOut()}
               >
                 <LogOut size={16} />

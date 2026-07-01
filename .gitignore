@@ -10,6 +10,10 @@ firebase-debug.*.log*
 # Firebase cache
 .firebase/
 
+# Firebase admin service account key (마이그레이션 스크립트용 — 절대 커밋 금지)
+serviceAccountKey.json
+*serviceAccount*.json
+
 # Firebase config
 
 # Uncomment this if you'd like others to create their own Firebase project.

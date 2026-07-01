@@ -1,3 +1,25 @@
+/**
+ * 사용자 프로필. 같은 category를 가진 사용자끼리 워크스페이스를 공유한다(같은 팀).
+ * 첫 로그인 시 category를 입력해 만든다. 경로: userProfiles/{uid}.
+ */
+export type UserProfile = {
+  uid: string;
+  email: string | null;
+  category: string;
+  createdAt: number;
+};
+
+/**
+ * 작업 세트 하나를 담는 워크스페이스. 메타데이터는 categories/{category}/workspaces/{wsId}에,
+ * 실제 데이터(행/열/PDF 등)는 그 하위 컬렉션에 저장되며 같은 카테고리 멤버가 공유한다.
+ */
+export type Workspace = {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type FieldRow = {
   id: string;
   label: string;
