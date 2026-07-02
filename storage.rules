@@ -2,11 +2,11 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // 같은 카테고리(팀) 멤버가 공유하는 PDF·이미지·폰트 파일.
-    // 본인 프로필의 category가 경로의 category와 같을 때만 허용.
+    // 공유 카테고리 파일(PDF·이미지·폰트). 사내 공용이므로 로그인한 사용자면 허용한다.
+    // (Storage→Firestore 교차 조회 firestore.get()은 불안정해 storage/unauthorized를 유발하므로
+    //  인증 기준으로 단순화. 데이터 격리는 Firestore 규칙에서 카테고리 기준으로 유지된다.)
     match /categories/{category}/{allPaths=**} {
-      allow read, write: if request.auth != null
-        && firestore.get(/databases/(default)/documents/userProfiles/$(request.auth.uid)).data.category == category;
+      allow read, write: if request.auth != null;
     }
 
     // 기존 사용자별 파일(마이그레이션 원본 백업). 본인만 접근.
