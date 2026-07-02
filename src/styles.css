@@ -112,7 +112,9 @@ button:disabled {
 .appShell {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
   /* 스프레드시트 격자는 좁은 화면에서 찌그러지지 않도록 최소 폭을 유지한다.
      (워크스페이스 목록·로그인·카테고리 화면은 반응형이라 min-width를 적용하지 않는다.) */
   min-width: 960px;
