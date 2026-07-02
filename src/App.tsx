@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, ClipboardEvent } from "react";
+import type { CSSProperties, ClipboardEvent, KeyboardEvent } from "react";
 import type { User } from "firebase/auth";
 import { ArrowLeft, FileText, LogOut, Save } from "lucide-react";
 import { PdfSetupModal } from "./components/PdfSetupModal";
@@ -27,6 +27,7 @@ type ActiveSetup = {
   pdfRow: PdfSlotRow;
   column?: ValueColumn;
 };
+type DeletedCellValue = { rowId: string; columnId: string; value: string };
 
 const MIN_SHEET_ZOOM = 0.75;
 const MAX_SHEET_ZOOM = 1.8;
@@ -48,6 +49,7 @@ function isMultiCellPaste(cells: string[][]) {
 export function App() {
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
   const sheetWrapRef = useRef<HTMLElement | null>(null);
+  const deletionUndoStackRef = useRef<DeletedCellValue[][]>([]);
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [activeSetup, setActiveSetup] = useState<ActiveSetup>();
   const [busyId, setBusyId] = useState<string>();
@@ -72,6 +74,10 @@ export function App() {
   const sheet = useSheetData({ notify: setUploadNotice, setBusyFeedback, setBusyId });
   const pdf = usePdfData({ notify: setUploadNotice, setBusyFeedback, setBusyId });
   const selection = useSheetSelection(sheet.rows, sheet.columns);
+
+  useEffect(() => {
+    deletionUndoStackRef.current = [];
+  }, [activeWorkspace?.id]);
 
   useEffect(() => {
     return watchAuth(setUser);
@@ -347,10 +353,37 @@ export function App() {
     const cells = parsePastedCells(event.clipboardData.getData("text/plain"));
     if (!isMultiCellPaste(cells)) return;
     event.preventDefault();
+    deletionUndoStackRef.current = [];
     void (async () => {
       const range = await sheet.pasteSheetCells(rowId, columnId, cells);
       if (range) selection.setRange(range.anchor, range.focus);
     })();
+  }
+
+  function handleSheetKeyDown(event: KeyboardEvent<HTMLElement>) {
+    const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z";
+    if (isUndo) {
+      const deletedValues = deletionUndoStackRef.current.pop();
+      if (!deletedValues) return;
+      event.preventDefault();
+      sheet.restoreCells(deletedValues);
+      return;
+    }
+
+    if (event.key !== "Delete" && event.key !== "Backspace") return;
+    const cells = selection.getSelectedValueCells();
+    if (cells.length <= 1) return;
+    event.preventDefault();
+    const deletedValues = sheet.clearCells(cells);
+    if (deletedValues.length) {
+      deletionUndoStackRef.current.push(deletedValues);
+      if (deletionUndoStackRef.current.length > 50) deletionUndoStackRef.current.shift();
+    }
+  }
+
+  function updateCell(columnId: string, rowId: string, value: string) {
+    deletionUndoStackRef.current = [];
+    sheet.updateCell(columnId, rowId, value);
   }
 
   async function openCellImagePreview(column: ValueColumn, rowId: string) {
@@ -506,6 +539,7 @@ export function App() {
           ref={sheetWrapRef}
           className="sheetWrap"
           onCopyCapture={selection.handleCopy}
+          onKeyDownCapture={handleSheetKeyDown}
           style={{ "--sheet-zoom": sheetZoom } as CSSProperties}
         >
           <div
@@ -531,7 +565,7 @@ export function App() {
               onCommitRow={(rowId) => void sheet.commitRow(rowId)}
               onDeleteRow={(rowId) => void deleteRow(rowId)}
               onMoveRow={(draggedRowId, targetRowId) => void sheet.moveRow(draggedRowId, targetRowId)}
-              onUpdateCell={sheet.updateCell}
+              onUpdateCell={updateCell}
               onPaste={handleSheetPaste}
               onUploadCellImage={(column, rowId, file) => void sheet.uploadCellImage(column, rowId, file)}
               onPreviewCellImage={(column, rowId) => void openCellImagePreview(column, rowId)}

@@ -307,6 +307,63 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
     if (changed) columnSaver.schedule(changed.id, changed);
   }
 
+  function clearCells(cells: Array<{ rowId: string; columnId: string }>) {
+    const rowIdsByColumn = new Map<string, Set<string>>();
+    for (const cell of cells) {
+      const rowIds = rowIdsByColumn.get(cell.columnId) ?? new Set<string>();
+      rowIds.add(cell.rowId);
+      rowIdsByColumn.set(cell.columnId, rowIds);
+    }
+
+    const clearedValues: Array<{ rowId: string; columnId: string; value: string }> = [];
+    for (const column of columnsRef.current) {
+      const rowIds = rowIdsByColumn.get(column.id);
+      if (!rowIds) continue;
+      for (const rowId of rowIds) {
+        const value = column.values[rowId] ?? "";
+        if (value) clearedValues.push({ rowId, columnId: column.id, value });
+      }
+    }
+
+    const next = columnsRef.current.map((column) => {
+      const rowIds = rowIdsByColumn.get(column.id);
+      if (!rowIds) return column;
+      const values = { ...column.values };
+      for (const rowId of rowIds) values[rowId] = "";
+      return { ...column, values, updatedAt: Date.now() };
+    });
+
+    columnsRef.current = next;
+    setColumns(next);
+    for (const column of next) {
+      if (rowIdsByColumn.has(column.id)) columnSaver.schedule(column.id, column);
+    }
+    return clearedValues;
+  }
+
+  function restoreCells(cells: Array<{ rowId: string; columnId: string; value: string }>) {
+    const valuesByColumn = new Map<string, Map<string, string>>();
+    for (const cell of cells) {
+      const values = valuesByColumn.get(cell.columnId) ?? new Map<string, string>();
+      values.set(cell.rowId, cell.value);
+      valuesByColumn.set(cell.columnId, values);
+    }
+
+    const next = columnsRef.current.map((column) => {
+      const restoredValues = valuesByColumn.get(column.id);
+      if (!restoredValues) return column;
+      const values = { ...column.values };
+      for (const [rowId, value] of restoredValues) values[rowId] = value;
+      return { ...column, values, updatedAt: Date.now() };
+    });
+
+    columnsRef.current = next;
+    setColumns(next);
+    for (const column of next) {
+      if (valuesByColumn.has(column.id)) columnSaver.schedule(column.id, column);
+    }
+  }
+
   /**
    * 다중 셀 붙여넣기. 필요한 만큼 행/열을 늘려 값을 채우고, 선택할 범위를 돌려준다(없으면 undefined).
    * 선택 적용은 호출부(App)가 반환 범위로 처리한다.
@@ -478,6 +535,8 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
     updateColumnName,
     deleteColumn,
     updateCell,
+    clearCells,
+    restoreCells,
     pasteSheetCells,
     uploadCellImage,
     clearCellImage,

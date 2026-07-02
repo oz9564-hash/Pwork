@@ -22,6 +22,7 @@ export type SheetSelectionController = {
   clearIfRow: (rowId: string) => void;
   clearIfColumn: (columnId: string) => void;
   getCellClass: (rowId: string, columnId?: string) => string;
+  getSelectedValueCells: () => Array<{ rowId: string; columnId: string }>;
   handleCopy: (event: ClipboardEvent<HTMLElement>) => void;
 };
 
@@ -117,6 +118,22 @@ export function useSheetSelection(rows: FieldRow[], columns: ValueColumn[]): She
     return column.images?.[row.id]?.name ?? column.values[row.id] ?? "";
   }
 
+  function getSelectedValueCells() {
+    const bounds = getBounds();
+    if (!bounds) return [];
+
+    const cells: Array<{ rowId: string; columnId: string }> = [];
+    for (let rowIndex = bounds.minRow; rowIndex <= bounds.maxRow; rowIndex += 1) {
+      const row = rows[rowIndex];
+      if (!row) continue;
+      for (let columnIndex = Math.max(0, bounds.minColumn); columnIndex <= bounds.maxColumn; columnIndex += 1) {
+        const column = columns[columnIndex];
+        if (column) cells.push({ rowId: row.id, columnId: column.id });
+      }
+    }
+    return cells;
+  }
+
   /** 선택 범위를 탭 구분 텍스트로 클립보드에 싣는다(시트 컨테이너의 onCopyCapture). */
   function handleCopy(event: ClipboardEvent<HTMLElement>) {
     const bounds = getBounds();
@@ -160,5 +177,16 @@ export function useSheetSelection(rows: FieldRow[], columns: ValueColumn[]): She
     return classes.join(" ");
   }
 
-  return { select, focus, extend, setRange, clear, clearIfRow, clearIfColumn, getCellClass, handleCopy };
+  return {
+    select,
+    focus,
+    extend,
+    setRange,
+    clear,
+    clearIfRow,
+    clearIfColumn,
+    getCellClass,
+    getSelectedValueCells,
+    handleCopy,
+  };
 }
