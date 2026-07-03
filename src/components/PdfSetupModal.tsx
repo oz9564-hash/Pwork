@@ -76,6 +76,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     EMPTY_ADJUST(column?.id ?? "", pdfRow.id),
   );
   const [selectedRowId, setSelectedRowId] = useState("");
+  const [placementArmed, setPlacementArmed] = useState(false);
   const [selectedAreaId, setSelectedAreaId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -120,6 +121,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
         setPdfDocument(loadedDocument);
         setPageCount(loadedDocument.numPages);
         setSelectedRowId("");
+        setPlacementArmed(false);
       } catch (loadError) {
         if (!alive) return;
         setError(loadError instanceof Error ? loadError.message : "PDF load failed.");
@@ -465,6 +467,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     // 한 번 놓으면 항목 선택과 따라다니는 미리보기를 해제한다(클릭 한 번 = 영역 하나).
     // 다시 추가하려면 왼쪽 목록에서 항목을 다시 골라야 한다.
     setSelectedRowId("");
+    setPlacementArmed(false);
     setHoverPoint(null);
   }
 
@@ -665,7 +668,10 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                       className={row.id === selectedRowId ? "fieldButton active" : "fieldButton"}
                       key={row.id}
                       type="button"
-                      onClick={() => setSelectedRowId(row.id)}
+                      onClick={() => {
+                        setSelectedRowId(row.id);
+                        setPlacementArmed(true);
+                      }}
                     >
                       <span>{row.label || "항목 없음"}</span>
                       <strong>{getAreaValue(row.id) || "값 없음"}</strong>
@@ -872,7 +878,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                     }
                   }}
                 >
-                  {!isAdjust && hoverPoint && selectedRowId ? (
+                  {!isAdjust && placementArmed && hoverPoint && selectedRowId ? (
                     <div
                       className="placementPreview"
                       style={{ left: hoverPoint.x, top: hoverPoint.y, fontSize: DEFAULT_FONT_SIZE * DISPLAY_SCALE }}
