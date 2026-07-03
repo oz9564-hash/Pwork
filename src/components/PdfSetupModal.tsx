@@ -93,8 +93,6 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
   const showPreview = isAdjust && !editing;
   const activeDoc = showPreview ? previewDoc : pdfDocument;
 
-  const firstRowId = rows[0]?.id ?? "";
-
   useEffect(() => {
     let alive = true;
     let loadedDocument: PDFDocumentProxy | undefined;
@@ -121,7 +119,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
         }
         setPdfDocument(loadedDocument);
         setPageCount(loadedDocument.numPages);
-        setSelectedRowId(firstRowId);
+        setSelectedRowId("");
       } catch (loadError) {
         if (!alive) return;
         setError(loadError instanceof Error ? loadError.message : "PDF load failed.");
@@ -135,7 +133,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       alive = false;
       void loadedDocument?.destroy();
     };
-  }, [pdfRow.id, firstRowId, isAdjust, column]);
+  }, [pdfRow.id, isAdjust, column]);
 
   // 편집/기준 모드는 원본 문서를, 미리보기 모드는 생성된 결과 문서를 캔버스에 그린다.
   useEffect(() => {
