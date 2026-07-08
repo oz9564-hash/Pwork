@@ -17,6 +17,7 @@ type Props = {
   onOpenSetup: (pdfRow: PdfSlotRow, column?: ValueColumn) => void;
   onDownloadOne: (column: ValueColumn, pdfRow: PdfSlotRow) => void;
   onDownloadColumn: (column: ValueColumn) => void;
+  onDownloadStarterMergedColumn: (column: ValueColumn) => void;
 };
 
 /**
@@ -36,6 +37,7 @@ export function PdfMappingSection({
   onOpenSetup,
   onDownloadOne,
   onDownloadColumn,
+  onDownloadStarterMergedColumn,
 }: Props) {
   const [pdfDropTarget, setPdfDropTarget] = useState<string>();
 
@@ -67,14 +69,24 @@ export function PdfMappingSection({
       </div>
       {columns.map((column) => (
         <div className="sheetCell sectionDownloadCell" key={`${column.id}-pdf-bulk-download`}>
-          <button
-            className="columnDownloadButton"
-            type="button"
-            disabled={busyId === column.id}
-            onClick={() => void onDownloadColumn(column)}
-          >
-            {column.name} 일괄 다운로드
-          </button>
+          <div className="columnDownloadActions">
+            <button
+              className="columnDownloadButton"
+              type="button"
+              disabled={busyId === column.id}
+              onClick={() => void onDownloadColumn(column)}
+            >
+              {column.name} 일괄 다운로드
+            </button>
+            <button
+              className="columnDownloadButton starterMergeDownloadButton"
+              type="button"
+              disabled={busyId === `${column.id}:starter-merge`}
+              onClick={() => void onDownloadStarterMergedColumn(column)}
+            >
+              개시용 병합 다운로드
+            </button>
+          </div>
         </div>
       ))}
       <div className="sheetCell sectionDownloadCell" />

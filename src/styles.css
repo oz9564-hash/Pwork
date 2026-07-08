@@ -746,6 +746,18 @@ button:disabled {
   font-weight: var(--fw-semibold);
 }
 
+.columnDownloadActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: 4px;
+}
+
+.starterMergeDownloadButton {
+  color: var(--text);
+}
+
 .spinIcon {
   animation: spin 0.8s linear infinite;
 }

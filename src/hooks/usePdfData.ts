@@ -3,7 +3,7 @@ import { createDebouncedSaver } from "../lib/debounceSave";
 import { saveStatusStore } from "../lib/saveStatus";
 import { createId } from "../lib/ids";
 import { persist as runPersist } from "../lib/persist";
-import { exportPdf } from "../services/pdfExport";
+import { downloadPdfBytes, mergePdfBytes, renderFilledPdf } from "../services/pdfExport";
 import { repository } from "../services/storage";
 import type { ColumnPdfAdjust, CommonPdf, FieldRow, FontAsset, PdfArea, PdfSlotRow, ValueColumn } from "../types";
 import type { BusyFeedback, UploadNotice } from "../components/StatusOverlays";
@@ -13,6 +13,34 @@ type Options = {
   setBusyFeedback: (feedback?: BusyFeedback) => void;
   setBusyId: (id?: string) => void;
 };
+
+const STARTER_MERGE_PDF_COUNT = 5;
+
+function normalizePdfSearchText(value: string) {
+  return value
+    .normalize("NFKC")
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[^0-9a-z가-힣ㄱ-ㅎㅏ-ㅣ\u1100-\u11FF]+/gi, "");
+}
+
+function includesAllKeywords(text: string, keywords: string[]) {
+  return keywords.every((keyword) => text.includes(normalizePdfSearchText(keyword)));
+}
+
+function isStandardContract(pdfRow: PdfSlotRow) {
+  const searchableName = normalizePdfSearchText(`${pdfRow.pdf?.name ?? ""} ${pdfRow.label}`);
+  return (
+    includesAllKeywords(searchableName, ["표준", "계약"]) ||
+    includesAllKeywords(searchableName, ["ㅍㅛㅈㅜㄴ", "ㄱㅖㅇㅑㄱ"]) ||
+    includesAllKeywords(searchableName, ["standard", "contract"])
+  );
+}
+
+function starterMergeCopies(pdfRow: PdfSlotRow) {
+  return isStandardContract(pdfRow) ? 2 : 1;
+}
 
 /**
  * PDF 도메인 상태와 영속화를 담당한다: PDF 행, 공통 PDF 파일, 기준 영역(모든 열 공유),
@@ -220,6 +248,13 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
    */
   async function exportColumnPdf(column: ValueColumn, pdfRow: PdfSlotRow, areas: PdfArea[], rows: FieldRow[]) {
     if (!pdfRow.pdf) return;
+    const output = await renderColumnPdf(column, pdfRow, areas, rows);
+    if (!output) return;
+    downloadPdfBytes(output.bytes, `${column.name}_${pdfRow.pdf.name.replace(/\.pdf$/i, "")}.pdf`);
+  }
+
+  async function renderColumnPdf(column: ValueColumn, pdfRow: PdfSlotRow, areas: PdfArea[], rows: FieldRow[]) {
+    if (!pdfRow.pdf) return undefined;
     const file = await repository.getCommonPdfFile(pdfRow.id);
     const imageEntries = await Promise.all(
       areas
@@ -229,16 +264,16 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
           return [area.rowId, await repository.getCellImageFile(column.id, area.rowId, image)] as const;
         }),
     );
-    await exportPdf({
+    const params = {
       file,
-      fileName: pdfRow.pdf.name,
       rows,
       column,
       areas,
       adjust: findAdjust(column.id, pdfRow.id),
       fontAsset: font,
       imageFiles: Object.fromEntries(imageEntries),
-    });
+    };
+    return { bytes: await renderFilledPdf(params), params };
   }
 
   async function downloadFilledPdf(column: ValueColumn, pdfRow: PdfSlotRow, rows: FieldRow[]) {
@@ -288,6 +323,43 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
     }
   }
 
+  /** 개시용 상단 5개 PDF만 하나로 병합한다. 표준계약서는 자동으로 2부 포함한다. */
+  async function downloadStarterMergedPdfColumn(column: ValueColumn, rows: FieldRow[]) {
+    const targets = pdfRows
+      .slice(0, STARTER_MERGE_PDF_COUNT)
+      .filter((pdfRow) => pdfRow.pdf && areasForPdfRow(pdfRow.id).length > 0);
+    if (targets.length === 0) return;
+
+    const busyKey = `${column.id}:starter-merge`;
+    setBusyId(busyKey);
+    setBusyFeedback({
+      title: `${column.name} 개시용 병합 PDF 생성 중`,
+      description: "상단 5개 PDF를 하나로 합치고 있습니다.",
+    });
+    try {
+      const items = [];
+      for (const pdfRow of targets) {
+        const output = await renderColumnPdf(column, pdfRow, areasForPdfRow(pdfRow.id), rows);
+        if (!output) continue;
+        items.push({ bytes: output.bytes, copies: starterMergeCopies(pdfRow) });
+      }
+
+      if (items.length === 0) return;
+      const merged = await mergePdfBytes(items);
+      downloadPdfBytes(merged, `${column.name}_개시용_병합.pdf`);
+    } catch (error) {
+      console.error("[pdf-starter-merge-download] failed", error);
+      notify({
+        tone: "error",
+        title: "개시용 병합 다운로드 실패",
+        description: "병합 PDF를 만들지 못했습니다. 다시 시도해 주세요.",
+      });
+    } finally {
+      setBusyId(undefined);
+      setBusyFeedback(undefined);
+    }
+  }
+
   return {
     pdfRows,
     font,
@@ -307,5 +379,6 @@ export function usePdfData({ notify, setBusyFeedback, setBusyId }: Options) {
     copyAdjustsForColumn,
     downloadFilledPdf,
     downloadPdfColumn,
+    downloadStarterMergedPdfColumn,
   };
 }
