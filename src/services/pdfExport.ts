@@ -24,6 +24,11 @@ export type ExportPdfParams = {
   imageFiles?: Record<string, Blob>;
 };
 
+export type MergePdfItem = {
+  bytes: Uint8Array;
+  copies?: number;
+};
+
 /**
  * 결과 PDF를 생성해 바이트로 돌려준다. 다운로드 없이 미리보기 렌더링에도 쓰인다.
  * exportPdf와 동일한 배치 로직을 공유하므로 미리보기 = 실제 출력이 보장된다.
@@ -86,13 +91,34 @@ export async function renderFilledPdf({
 
 export async function exportPdf(params: ExportPdfParams) {
   const output = await renderFilledPdf(params);
+  downloadPdfBytes(output, `${params.column.name}_${params.fileName.replace(/\.pdf$/i, "")}.pdf`);
+}
+
+export async function mergePdfBytes(items: MergePdfItem[]) {
+  const mergedDocument = await PDFDocument.create();
+
+  for (const item of items) {
+    const copies = Math.max(1, item.copies ?? 1);
+    const sourceDocument = await PDFDocument.load(item.bytes);
+    const pageIndices = sourceDocument.getPageIndices();
+
+    for (let copy = 0; copy < copies; copy += 1) {
+      const pages = await mergedDocument.copyPages(sourceDocument, pageIndices);
+      for (const page of pages) mergedDocument.addPage(page);
+    }
+  }
+
+  return mergedDocument.save();
+}
+
+export function downloadPdfBytes(output: Uint8Array, fileName: string) {
   const outputBuffer = new ArrayBuffer(output.byteLength);
   new Uint8Array(outputBuffer).set(output);
   const blob = new Blob([outputBuffer], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${params.column.name}_${params.fileName.replace(/\.pdf$/i, "")}.pdf`;
+  anchor.download = fileName;
   anchor.click();
   URL.revokeObjectURL(url);
 }

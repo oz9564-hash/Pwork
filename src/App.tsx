@@ -587,6 +587,7 @@ export function App() {
               onOpenSetup={(pdfRow, column) => setActiveSetup({ pdfRow, column })}
               onDownloadOne={(column, pdfRow) => void pdf.downloadFilledPdf(column, pdfRow, sheet.rows)}
               onDownloadColumn={(column) => void pdf.downloadPdfColumn(column, sheet.rows)}
+              onDownloadStarterMergedColumn={(column) => void pdf.downloadStarterMergedPdfColumn(column, sheet.rows)}
             />
           </div>
         </section>
