@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, RefObject } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { ChevronLeft, ChevronRight, Eye, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Eye, Pencil, Plus, RotateCcw, Save, Search, Trash2, X } from "lucide-react";
 import { createId } from "../lib/ids";
 import { repository } from "../services/storage";
 import { renderFilledPdf } from "../services/pdfExport";
@@ -41,6 +41,71 @@ type DragState = {
 const MIN_AREA_WIDTH = 0.02;
 const MIN_AREA_HEIGHT = 0.01;
 
+const FIELD_SECTIONS = [
+  {
+    id: "participant",
+    label: "참여자 정보",
+    fields: ["참여자명", "참여자 주소지", "생년월일", "참여자 전화번호", "참여자 성별", "참여자 주민등록번호"],
+  },
+  {
+    id: "company",
+    label: "참여기업 정보",
+    fields: [
+      "참여기업명",
+      "프로그램명",
+      "일경험 시작일",
+      "일경험 종료일",
+      "일경험 시간",
+      "일경험 주소지",
+      "참여기업 대표명",
+      "참여기업 전화번호",
+      "참여기업 업종",
+      "참여기업 피보험자수",
+      "참여기업 소재지",
+      "참여기업 담당부서",
+      "참여기업 담당자명",
+      "참여기업 이메일",
+      "직무/분야",
+      "상세 과업",
+      "일경험 전체기간",
+      "일경험 전체 기간",
+      "기업 서명",
+      "사업자 등록번호",
+      "사업자등록번호",
+    ],
+  },
+  {
+    id: "work",
+    label: "일경험 내용 관련",
+    fields: [
+      "참여 시간",
+      "출석률",
+      "참여자 지원금액",
+      "참여자 은행명",
+      "참여자 계좌번호",
+      "()월 결과보고",
+      "( ) 월 결과보고",
+      "()월 결과보고 편성",
+      "( ) 월 결과보고 편성 시간",
+      "기업지원금 금액",
+      "기업지원금 입금 계좌",
+      "기업지원금 입금계좌 (입금명)",
+      "참여인원",
+      "() 월 결과보고 작성 월",
+      "()월 결과보고 작성 일",
+      "() 월 결과보고 작성 일",
+      "계약 월",
+      "계약 일",
+      "계약월(기업)",
+      "계약일(기업)",
+      "게약일(기업)",
+      "연도",
+    ],
+  },
+] as const;
+
+type FieldSection = (typeof FIELD_SECTIONS)[number];
+
 type Props = {
   pdfRow: PdfSlotRow;
   rows: FieldRow[];
@@ -76,6 +141,10 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     EMPTY_ADJUST(column?.id ?? "", pdfRow.id),
   );
   const [selectedRowId, setSelectedRowId] = useState("");
+  const [fieldSearch, setFieldSearch] = useState("");
+  const [openFieldSections, setOpenFieldSections] = useState<Set<FieldSection["id"]>>(
+    () => new Set(FIELD_SECTIONS.map((section) => section.id)),
+  );
   const [placementArmed, setPlacementArmed] = useState(false);
   const [selectedAreaId, setSelectedAreaId] = useState("");
   const [loading, setLoading] = useState(true);
@@ -434,6 +503,33 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
   const pageAreas = useMemo(() => normalizedAreas.filter((area) => area.page === page), [normalizedAreas, page]);
   const selectedArea = areas.find((area) => area.id === selectedAreaId);
   const selectedRow = rows.find((row) => row.id === selectedRowId);
+  const hasFieldSearch = normalizeSearchText(fieldSearch).length > 0;
+  const sectionedRows = useMemo(() => {
+    const query = normalizeSearchText(fieldSearch);
+    const grouped = FIELD_SECTIONS.map((section) => ({ section, rows: [] as FieldRow[] }));
+
+    for (const row of rows) {
+      const label = row.label || "항목 없음";
+      const value = getAreaValue(row.id) || "";
+      const section = findFieldSection(label);
+      const haystack = normalizeSearchText(`${label} ${value} ${section.label}`);
+      if (query && !haystack.includes(query)) continue;
+      grouped.find((group) => group.section.id === section.id)?.rows.push(row);
+    }
+
+    return grouped.filter((group) => group.rows.length > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, fieldSearch]);
+  const filteredRowCount = sectionedRows.reduce((total, group) => total + group.rows.length, 0);
+
+  function toggleFieldSection(sectionId: FieldSection["id"]) {
+    setOpenFieldSections((current) => {
+      const next = new Set(current);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      return next;
+    });
+  }
 
   function addAreaAt(clientX?: number, clientY?: number) {
     if (isAdjust) return; // adjust 모드에서는 영역을 추가하지 않는다.
@@ -662,21 +758,49 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
             {!isAdjust ? (
               <>
                 <div className="railTitle">항목</div>
+                <label className="fieldSearch">
+                  <Search size={15} />
+                  <input
+                    type="search"
+                    value={fieldSearch}
+                    onChange={(event) => setFieldSearch(event.target.value)}
+                    placeholder="항목 검색"
+                  />
+                </label>
                 <div className="fieldList">
-                  {rows.map((row) => (
-                    <button
-                      className={row.id === selectedRowId ? "fieldButton active" : "fieldButton"}
-                      key={row.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedRowId(row.id);
-                        setPlacementArmed(true);
-                      }}
-                    >
-                      <span>{row.label || "항목 없음"}</span>
-                      <strong>{getAreaValue(row.id) || "값 없음"}</strong>
-                    </button>
+                  {sectionedRows.map(({ section, rows: sectionRows }) => (
+                    <div className="fieldSection" key={section.id}>
+                      <button
+                        className="fieldSectionHeader"
+                        type="button"
+                        onClick={() => toggleFieldSection(section.id)}
+                        aria-expanded={hasFieldSearch || openFieldSections.has(section.id)}
+                      >
+                        <span>
+                          <ChevronDown size={14} />
+                          {section.label}
+                        </span>
+                        <strong>{sectionRows.length}</strong>
+                      </button>
+                      {hasFieldSearch || openFieldSections.has(section.id)
+                        ? sectionRows.map((row) => (
+                            <button
+                              className={row.id === selectedRowId ? "fieldButton active" : "fieldButton"}
+                              key={row.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedRowId(row.id);
+                                setPlacementArmed(true);
+                              }}
+                            >
+                              <span>{row.label || "항목 없음"}</span>
+                              <strong>{getAreaValue(row.id) || "값 없음"}</strong>
+                            </button>
+                          ))
+                        : null}
+                    </div>
                   ))}
+                  {filteredRowCount === 0 ? <p className="fieldEmpty">검색 결과가 없습니다.</p> : null}
                 </div>
               </>
             ) : null}
@@ -983,6 +1107,27 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
         </footer>
       </section>
     </div>
+  );
+}
+
+function normalizeSearchText(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function normalizeFieldKey(value: string) {
+  return normalizeSearchText(value).replace(/\s+/g, "");
+}
+
+function findFieldSection(label: string): FieldSection {
+  const normalizedLabel = normalizeFieldKey(label);
+  return (
+    FIELD_SECTIONS.find(
+      (section) =>
+        section.fields.some((field) => {
+          const normalizedField = normalizeFieldKey(field);
+          return normalizedLabel === normalizedField || normalizedLabel.includes(normalizedField);
+        }),
+    ) ?? FIELD_SECTIONS[0]
   );
 }
 

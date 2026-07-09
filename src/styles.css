@@ -1331,12 +1331,117 @@ button:disabled {
   letter-spacing: 0.04em;
 }
 
+.fieldSearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  color: var(--text-muted);
+}
+
+.fieldSearch svg {
+  position: absolute;
+  left: var(--space-3);
+  pointer-events: none;
+}
+
+.fieldSearch input {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text);
+  padding: 0 var(--space-3) 0 34px;
+  font-size: var(--fs-sm);
+}
+
+.fieldSearch input:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .fieldList {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   overflow: auto;
-  max-height: 310px;
+  max-height: 360px;
+}
+
+.fieldSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fieldSectionHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  width: 100%;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background: #eef2f7;
+  padding: 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-align: left;
+  box-shadow: none;
+}
+
+.fieldSectionHeader:hover {
+  border-color: var(--border-hover);
+  background: #e4e9f0;
+}
+
+.fieldSectionHeader:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.fieldSectionHeader span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.fieldSectionHeader svg {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+
+.fieldSectionHeader[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+
+.fieldSectionHeader strong {
+  min-width: 22px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  padding: 1px 7px;
+  text-align: center;
+  font-size: var(--fs-xs);
+}
+
+.fieldEmpty {
+  margin: 0;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  text-align: center;
 }
 
 .fieldButton {
