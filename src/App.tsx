@@ -14,6 +14,7 @@ import { useSheetSelection } from "./hooks/useSheetSelection";
 import { useSheetData } from "./hooks/useSheetData";
 import { usePdfData } from "./hooks/usePdfData";
 import { saveStatusStore, useSaveStatus } from "./lib/saveStatus";
+import { clearLastWorkspaceId, getLastWorkspaceId, saveLastWorkspaceId } from "./lib/lastWorkspace";
 import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
 import {
   clearActiveWorkspace as clearRepoWorkspace,
@@ -68,6 +69,7 @@ export function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
   const [leaving, setLeaving] = useState(false);
   const saveState = useSaveStatus();
+  const workspaceStorageUserId = user?.uid ?? "skip-login";
 
   // 도메인 상태/영속화는 훅으로 분리한다. 토스트·블로킹 오버레이·버튼 busy는 App이 소유하고
   // 콜백으로 내려준다. 선택(useSheetSelection)은 시트 데이터를 읽으므로 그 다음에 만든다.
@@ -142,7 +144,18 @@ export function App() {
     if (!profile?.category) return;
     void (async () => {
       try {
-        setWorkspaces(await repository.listWorkspaces(profile.category));
+        const loadedWorkspaces = await repository.listWorkspaces(profile.category);
+        setWorkspaces(loadedWorkspaces);
+
+        const lastWorkspaceId = getLastWorkspaceId(workspaceStorageUserId, profile.category);
+        if (!lastWorkspaceId) return;
+
+        const lastWorkspace = loadedWorkspaces.find((workspace) => workspace.id === lastWorkspaceId);
+        if (lastWorkspace) {
+          setActiveWorkspace(lastWorkspace);
+        } else {
+          clearLastWorkspaceId(workspaceStorageUserId, profile.category);
+        }
       } catch (error) {
         console.error("[workspace] list failed", error);
         setUploadNotice({
@@ -153,19 +166,20 @@ export function App() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.category]);
+  }, [profile?.category, workspaceStorageUserId]);
 
   // 워크스페이스를 열면 그때 저장소 컨텍스트(카테고리+워크스페이스)를 지정하고 데이터를 불러온다.
   // (reset을 먼저 해 이전 워크스페이스 데이터가 잠깐 비치는 것을 막는다.)
   useEffect(() => {
     if (!activeWorkspace || !profile?.category) return;
     setRepoWorkspace(profile.category, activeWorkspace.id);
+    saveLastWorkspaceId(workspaceStorageUserId, profile.category, activeWorkspace.id);
     selection.clear();
     sheet.reset();
     pdf.reset();
     void Promise.all([sheet.load(), pdf.load()]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkspace]);
+  }, [activeWorkspace, workspaceStorageUserId]);
 
   async function handleSignIn() {
     setAuthBusy(true);
@@ -235,6 +249,9 @@ export function App() {
       pdf.reset();
       selection.clear();
       clearRepoWorkspace();
+      if (profile?.category) {
+        clearLastWorkspaceId(workspaceStorageUserId, profile.category);
+      }
       setActiveWorkspace(null);
       setLeaving(false);
     }
