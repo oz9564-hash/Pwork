@@ -1999,8 +1999,279 @@ button:disabled {
 .pocPanel {
   display: grid;
   gap: var(--space-5);
-  width: min(880px, 100%);
-  margin: 72px auto 0;
+  width: min(1440px, 100%);
+  margin: 52px auto 0;
+}
+
+.pocIntro {
+  max-width: 720px;
+}
+
+.pocIntro h2 {
+  margin: var(--space-2) 0;
+  font-size: clamp(26px, 3vw, 38px);
+  letter-spacing: -0.04em;
+}
+
+.pocIntro p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.pocUploadGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.pocUploadCard {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 92px;
+  border: 1px dashed var(--border-hover);
+  border-radius: 10px;
+  padding: var(--space-4);
+  background: rgb(255 255 255 / 0.82);
+  cursor: pointer;
+}
+
+.pocUploadCard:hover {
+  border-color: #818cf8;
+}
+
+.pocUploadCard.isReady {
+  border-style: solid;
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.pocUploadCard > span:last-of-type {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.pocUploadCard strong,
+.pocUploadCard small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pocUploadCard small {
+  color: var(--text-muted);
+}
+
+.pocUploadCard input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pocUploadIcon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.pocUploadCard.isReady .pocUploadIcon {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.pocAnalyzeRow,
+.pocAnalysisResult,
+.pocSectionHeading,
+.pocSectionHeading .button {
+  display: flex;
+  align-items: center;
+}
+
+.pocAnalyzeRow {
+  gap: var(--space-3);
+}
+
+.pocAnalysisResult {
+  gap: var(--space-1);
+  color: #15803d;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.pocError {
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.pocResult {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  margin-top: var(--space-4);
+}
+
+.pocSectionHeading {
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.pocSectionHeading span {
+  color: #4f46e5;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+}
+
+.pocSectionHeading h3 {
+  margin: 2px 0 0;
+  font-size: var(--fs-title);
+}
+
+.pocSectionHeading p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.pocSectionHeading .button {
+  gap: var(--space-1);
+}
+
+.pocCommonGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+
+.pocCommonGrid label {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3);
+  border-right: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.pocCommonGrid label.isWide {
+  grid-column: span 2;
+}
+
+.pocCommonGrid label > span {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.pocCommonGrid input,
+.pocSheet input,
+.pocSheet textarea {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.pocCommonGrid input:focus,
+.pocSheet input:focus,
+.pocSheet textarea:focus {
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+
+.pocSessionHeading {
+  margin-top: var(--space-4);
+}
+
+.pocSheetWrap {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.pocSheet {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.pocSheet th,
+.pocSheet td {
+  border-right: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-muted);
+  padding: 0;
+  background: var(--bg-surface);
+  vertical-align: top;
+}
+
+.pocSheet thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-width: 128px;
+  height: 40px;
+  padding: 0 var(--space-2);
+  background: var(--bg-header);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+
+.pocSheet thead th:first-child,
+.pocSheet tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 54px;
+  min-width: 54px;
+  text-align: center;
+}
+
+.pocSheet tbody th {
+  padding-top: var(--space-3);
+  background: var(--bg-header);
+  color: var(--text-muted);
+}
+
+.pocSheet td {
+  width: 150px;
+  min-width: 150px;
+  height: 118px;
+}
+
+.pocSheet td.isLongCell {
+  width: 310px;
+  min-width: 310px;
+}
+
+.pocSheet input,
+.pocSheet textarea {
+  display: block;
+  height: 100%;
+  padding: var(--space-3);
+  resize: none;
+  line-height: 1.5;
 }
 
 .pocHero {
@@ -2088,6 +2359,21 @@ button:disabled {
 
   .pocPanel {
     margin-top: 52px;
+  }
+
+  .pocUploadGrid,
+  .pocCommonGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .pocCommonGrid label.isWide {
+    grid-column: auto;
+  }
+
+  .pocAnalyzeRow,
+  .pocSectionHeading {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -2300,4 +2586,469 @@ button:disabled {
   align-items: center;
   gap: var(--space-2);
   flex: 1;
+}
+
+/* =========================================================================
+   Electron HWP POC
+   ========================================================================= */
+.electronPocShell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 1080px;
+  overflow: hidden;
+}
+
+.electronPocToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 52px;
+  margin-top: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.electronPocToolbar .button,
+.electronPreviewPanel .button,
+.electronPanelHeading .button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+}
+
+.electronStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: max-content;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.electronStatus.isReady {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.electronStatus.isUnavailable {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.mappingActiveButton {
+  border-color: #818cf8;
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.mappingSaveButton {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.electronTemplatePath {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.electronPocError {
+  margin-top: var(--space-2);
+}
+
+.electronPocBody {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(380px, 0.55fr);
+  min-height: 0;
+  flex: 1;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.electronSheetPanel,
+.electronPreviewPanel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.electronPanelHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 62px;
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+}
+
+.electronPanelHeading span {
+  color: #4f46e5;
+  font-size: 10px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.1em;
+}
+
+.electronPanelHeading h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.electronSheetWrap {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.electronSheet {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.electronSheet th,
+.electronSheet td {
+  border-right: 1px solid var(--border-muted);
+  border-bottom: 1px solid var(--border-muted);
+  padding: 0;
+  background: var(--bg-surface);
+}
+
+.electronSheet thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  width: 176px;
+  min-width: 176px;
+  height: 40px;
+  padding: 0 var(--space-2);
+  background: var(--bg-header);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  text-align: left;
+}
+
+.electronSheet thead th > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.electronSheet thead th.isMapped {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.electronMapButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.electronSheet thead th.isMapped .electronMapButton {
+  border-color: #86efac;
+  color: #15803d;
+}
+
+.electronSheet:has(.electronMapButton) thead th {
+  height: 68px;
+}
+
+.electronSheet thead th:first-child,
+.electronSheet tbody th {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  width: 44px;
+  min-width: 44px;
+  background: var(--bg-header);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.electronSheet tbody tr.isSelected td,
+.electronSheet tbody tr.isSelected th {
+  background: var(--primary-soft);
+}
+
+.electronSheet td {
+  width: 176px;
+  min-width: 176px;
+  height: 96px;
+}
+
+.electronSheet textarea {
+  display: block;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 0;
+  outline: 0;
+  padding: var(--space-2);
+  background: transparent;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.electronSheet textarea:focus {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+.electronSheet .electronRowAction {
+  width: 50px;
+  min-width: 50px;
+  padding: var(--space-2);
+}
+
+.electronValuePreview {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.electronValuePreview > div {
+  display: grid;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border-muted);
+  padding: var(--space-3) var(--space-2);
+}
+
+.electronValuePreview span {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.electronValuePreview p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.electronPdfPreview {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  background: var(--bg-muted);
+}
+
+.structuredPocBody {
+  grid-template-columns: minmax(620px, 1.1fr) minmax(420px, 0.9fr);
+}
+
+.structuredInputPanel {
+  overflow: hidden;
+}
+
+.structuredInputScroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+.commonInputGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.commonInputGrid label,
+.roundForm label {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.commonInputGrid label.isWide {
+  grid-column: span 2;
+}
+
+.commonInputGrid label > span,
+.roundForm label > span {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+.mappedInputRow {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.mappedInputRow input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: var(--bg-surface);
+  color: var(--text);
+}
+
+.mappedInputRow input:focus,
+.roundContentField textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--focus-ring);
+}
+
+.mappedInputRow button,
+.roundMapButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 72px;
+  border: 1px solid #a5b4fc;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.roundEditorHeading {
+  margin: var(--space-6) 0 var(--space-3);
+}
+
+.roundEditorHeading span {
+  color: #4f46e5;
+  font-size: 10px;
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.1em;
+}
+
+.roundEditorHeading h2 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.roundEditorLayout {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  min-height: 430px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.roundList {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-header);
+}
+
+.roundList button {
+  display: grid;
+  gap: 2px;
+  border: 0;
+  border-bottom: 1px solid var(--border-muted);
+  padding: var(--space-3);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.roundList button.isSelected {
+  background: var(--primary-soft);
+  color: var(--primary);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.roundList button span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.roundForm {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-surface);
+}
+
+.roundContentField {
+  min-height: 0;
+  flex: 1;
+}
+
+.roundContentField textarea {
+  width: 100%;
+  min-height: 300px;
+  flex: 1;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--bg-surface);
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.roundMapButton {
+  align-self: flex-start;
+  min-height: 34px;
+}
+
+.structuredPreviewEmpty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 0;
+  flex: 1;
+  padding: var(--space-5);
+  background: var(--bg-muted);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.structuredPreviewEmpty strong {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.structuredPreviewEmpty p {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
 }

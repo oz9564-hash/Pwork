@@ -4,7 +4,7 @@ import type { User } from "firebase/auth";
 import { ArrowLeft, Eye, EyeOff, FileText, LogOut, Save } from "lucide-react";
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { PdfMappingSection } from "./components/PdfMappingSection";
-import { PocPage } from "./components/PocPage";
+import { PocPage } from "./features/electron-hwp-poc/PocPage";
 import { SaveStatusIndicator } from "./components/SaveStatusIndicator";
 import { SheetGrid } from "./components/SheetGrid";
 import { StatusOverlays } from "./components/StatusOverlays";
