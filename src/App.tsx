@@ -615,6 +615,7 @@ export function App() {
           pdfRow={activeSetup.pdfRow}
           column={activeSetup.column}
           rows={sheet.rows}
+          columns={sheet.columns}
           font={pdf.font}
           onClose={() => setActiveSetup(undefined)}
           onSaved={() => void pdf.reloadPdfData()}

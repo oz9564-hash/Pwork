@@ -109,6 +109,7 @@ type FieldSection = (typeof FIELD_SECTIONS)[number];
 type Props = {
   pdfRow: PdfSlotRow;
   rows: FieldRow[];
+  columns: ValueColumn[];
   font?: FontAsset;
   /** 미세조정 대상 열. 있으면 adjust 모드, 없으면 기준(base) 편집 모드. */
   column?: ValueColumn;
@@ -125,7 +126,7 @@ const EMPTY_ADJUST = (columnId: string, pdfRowId: string): ColumnPdfAdjust => ({
   updatedAt: Date.now(),
 });
 
-export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: Props) {
+export function PdfSetupModal({ pdfRow, rows, columns, font, column, onClose, onSaved }: Props) {
   const isAdjust = Boolean(column);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -485,6 +486,14 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
     return column.values[rowId] ?? "";
   }
 
+  function getAreaSizingText(rowId: string) {
+    const rowLabel = rows.find((row) => row.id === rowId)?.label ?? "";
+    return columns.reduce((longest, valueColumn) => {
+      const value = valueColumn.values[rowId] ?? "";
+      return value.length > longest.length ? value : longest;
+    }, rowLabel);
+  }
+
   function isImageArea(area: PdfArea) {
     return resolveAreaKind(area, column) === "image";
   }
@@ -517,6 +526,15 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
       grouped.find((group) => group.section.id === section.id)?.rows.push(row);
     }
 
+    for (const group of grouped) {
+      group.rows.sort((a, b) =>
+        (a.label || "항목 없음").localeCompare(b.label || "항목 없음", "ko", {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      );
+    }
+
     return grouped.filter((group) => group.rows.length > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, fieldSearch]);
@@ -537,7 +555,7 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
 
     const overlay = overlayRef.current;
     const rect = overlay?.getBoundingClientRect();
-    const value = getAreaValue(selectedRowId);
+    const value = getAreaSizingText(selectedRowId);
     const width = measureAreaWidth(value, DEFAULT_FONT_SIZE, size.width);
     const height = measureAreaHeight(DEFAULT_FONT_SIZE, size.height);
     const x = rect && clientX ? (clientX - rect.left) / rect.width - width / 2 : 0.39;
@@ -918,6 +936,21 @@ export function PdfSetupModal({ pdfRow, rows, font, column, onClose, onSaved }: 
                 ) : (
                   <>
                     <label>
+                      최대 글자 크기 (pt)
+                      <input
+                        type="number"
+                        min={1}
+                        max={72}
+                        step={0.5}
+                        value={selectedArea.fontSize}
+                        onChange={(event) =>
+                          updateSelectedArea({
+                            fontSize: clamp(Number(event.target.value) || DEFAULT_FONT_SIZE, 1, 72),
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
                       텍스트 맞춤
                       <select
                         value={resolved(selectedArea).textFitMode}
@@ -1120,15 +1153,43 @@ function normalizeFieldKey(value: string) {
 
 function findFieldSection(label: string): FieldSection {
   const normalizedLabel = normalizeFieldKey(label);
-  return (
-    FIELD_SECTIONS.find(
-      (section) =>
-        section.fields.some((field) => {
-          const normalizedField = normalizeFieldKey(field);
-          return normalizedLabel === normalizedField || normalizedLabel.includes(normalizedField);
-        }),
-    ) ?? FIELD_SECTIONS[0]
+  const scored = FIELD_SECTIONS.map((section) => ({
+    section,
+    score: Math.max(
+      sectionKeywordScore(normalizedLabel, section.id),
+      ...section.fields.map((field) => fieldSimilarity(normalizedLabel, normalizeFieldKey(field))),
+    ),
+  }));
+  return scored.sort((a, b) => b.score - a.score)[0].section;
+}
+
+function sectionKeywordScore(label: string, sectionId: FieldSection["id"]) {
+  const keywords: Record<FieldSection["id"], string[]> = {
+    participant: ["참여자", "성명", "이름", "생년월일", "성별", "주민", "전화", "주소"],
+    company: ["기업", "사업자", "담당자", "직무", "업종", "근무", "프로그램", "일경험"],
+    work: ["지원금", "계좌", "은행", "출석", "참여시간", "결과보고", "계약", "연도"],
+  };
+  return keywords[sectionId].reduce(
+    (score, keyword) => score + (label.includes(normalizeFieldKey(keyword)) ? 0.45 : 0),
+    0,
   );
+}
+
+function fieldSimilarity(left: string, right: string) {
+  if (!left || !right) return 0;
+  if (left === right) return 2;
+  if (left.includes(right) || right.includes(left)) return 1.2;
+
+  const leftBigrams = toBigrams(left);
+  const rightBigrams = toBigrams(right);
+  const overlap = [...leftBigrams].filter((part) => rightBigrams.has(part)).length;
+  const union = new Set([...leftBigrams, ...rightBigrams]).size;
+  return union ? overlap / union : 0;
+}
+
+function toBigrams(value: string) {
+  if (value.length < 2) return new Set([value]);
+  return new Set(Array.from({ length: value.length - 1 }, (_, index) => value.slice(index, index + 2)));
 }
 
 function clamp(value: number, min: number, max: number) {
