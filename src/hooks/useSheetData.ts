@@ -287,6 +287,16 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
     if (changed) columnSaver.schedule(changed.id, changed);
   }
 
+  function updateColumnActive(columnId: string, isActive: boolean) {
+    const next = columnsRef.current.map((column) =>
+      column.id === columnId ? { ...column, isActive, updatedAt: Date.now() } : column,
+    );
+    columnsRef.current = next;
+    setColumns(next);
+    const changed = next.find((column) => column.id === columnId);
+    if (changed) columnSaver.schedule(changed.id, changed);
+  }
+
   /** 열 삭제. 선택 해제는 호출부(App)가 반환값을 보고 처리한다. PDF 보정 삭제는 repository가 함께 처리. */
   async function deleteColumn(columnId: string): Promise<boolean> {
     // 삭제되는 열의 디바운스 저장이 삭제 후 실행돼 문서를 되살리지 않도록 bypass로 지운다.
@@ -533,6 +543,7 @@ export function useSheetData({ notify, setBusyFeedback, setBusyId }: Options) {
     addColumn,
     duplicateColumn,
     updateColumnName,
+    updateColumnActive,
     deleteColumn,
     updateCell,
     clearCells,

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ClipboardEvent, KeyboardEvent } from "react";
 import type { User } from "firebase/auth";
-import { ArrowLeft, FileText, LogOut, Save } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, FileText, LogOut, Save } from "lucide-react";
 import { PdfSetupModal } from "./components/PdfSetupModal";
 import { PdfMappingSection } from "./components/PdfMappingSection";
+import { PocPage } from "./components/PocPage";
 import { SaveStatusIndicator } from "./components/SaveStatusIndicator";
 import { SheetGrid } from "./components/SheetGrid";
 import { StatusOverlays } from "./components/StatusOverlays";
@@ -13,6 +14,7 @@ import { CategorySetup } from "./components/CategorySetup";
 import { useSheetSelection } from "./hooks/useSheetSelection";
 import { useSheetData } from "./hooks/useSheetData";
 import { usePdfData } from "./hooks/usePdfData";
+import { useWorkspaceRouter } from "./hooks/useWorkspaceRouter";
 import { saveStatusStore, useSaveStatus } from "./lib/saveStatus";
 import { clearLastWorkspaceId, getLastWorkspaceId, saveLastWorkspaceId } from "./lib/lastWorkspace";
 import { SKIP_LOGIN, signInWithGoogle, signOutUser, watchAuth } from "./services/firebase";
@@ -48,6 +50,7 @@ function isMultiCellPaste(cells: string[][]) {
 }
 
 export function App() {
+  const { route, navigateToWorkspaceList, navigateToWorkspace } = useWorkspaceRouter();
   const resizeRef = useRef<{ columnId: string; startX: number; startWidth: number } | null>(null);
   const sheetWrapRef = useRef<HTMLElement | null>(null);
   const deletionUndoStackRef = useRef<DeletedCellValue[][]>([]);
@@ -62,6 +65,7 @@ export function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [authBusy, setAuthBusy] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showInactiveColumns, setShowInactiveColumns] = useState(false);
   // undefined = 프로필 확인 중, null = 미설정(카테고리 입력 필요), UserProfile = 설정됨
   const [profile, setProfile] = useState<UserProfile | null | undefined>(undefined);
   // 로그인 후 (카테고리의) 워크스페이스 목록 → 선택 시 격자. activeWorkspace가 null이면 목록 화면.
@@ -75,10 +79,13 @@ export function App() {
   // 콜백으로 내려준다. 선택(useSheetSelection)은 시트 데이터를 읽으므로 그 다음에 만든다.
   const sheet = useSheetData({ notify: setUploadNotice, setBusyFeedback, setBusyId });
   const pdf = usePdfData({ notify: setUploadNotice, setBusyFeedback, setBusyId });
-  const selection = useSheetSelection(sheet.rows, sheet.columns);
+  const displayedColumns = sheet.columns.filter((column) => showInactiveColumns || column.isActive !== false);
+  const inactiveColumnCount = sheet.columns.length - sheet.columns.filter((column) => column.isActive !== false).length;
+  const selection = useSheetSelection(sheet.rows, displayedColumns);
 
   useEffect(() => {
     deletionUndoStackRef.current = [];
+    setShowInactiveColumns(false);
   }, [activeWorkspace?.id]);
 
   useEffect(() => {
@@ -147,14 +154,19 @@ export function App() {
         const loadedWorkspaces = await repository.listWorkspaces(profile.category);
         setWorkspaces(loadedWorkspaces);
 
-        const lastWorkspaceId = getLastWorkspaceId(workspaceStorageUserId, profile.category);
+        if (route.name === "poc") return;
+
+        const routedWorkspaceId = route.name === "workspace" ? route.workspaceId : undefined;
+        const lastWorkspaceId = routedWorkspaceId ?? getLastWorkspaceId(workspaceStorageUserId, profile.category);
         if (!lastWorkspaceId) return;
 
         const lastWorkspace = loadedWorkspaces.find((workspace) => workspace.id === lastWorkspaceId);
         if (lastWorkspace) {
           setActiveWorkspace(lastWorkspace);
+          navigateToWorkspace(lastWorkspace.id, true);
         } else {
           clearLastWorkspaceId(workspaceStorageUserId, profile.category);
+          navigateToWorkspaceList(true);
         }
       } catch (error) {
         console.error("[workspace] list failed", error);
@@ -235,10 +247,11 @@ export function App() {
 
   function openWorkspace(workspace: Workspace) {
     setActiveWorkspace(workspace);
+    navigateToWorkspace(workspace.id);
   }
 
   // 워크스페이스를 떠나기 전 대기 중인 저장을 확정하고 컨텍스트를 비운다(다른 워크스페이스로의 저장 누수 방지).
-  async function leaveWorkspace() {
+  async function leaveWorkspace(updateRoute = true) {
     setLeaving(true);
     try {
       await Promise.all([sheet.flushPendingSaves(), pdf.flushPendingSaves()]);
@@ -253,9 +266,31 @@ export function App() {
         clearLastWorkspaceId(workspaceStorageUserId, profile.category);
       }
       setActiveWorkspace(null);
+      if (updateRoute) navigateToWorkspaceList();
       setLeaving(false);
     }
   }
+
+  // 브라우저 뒤로/앞으로 이동도 화면 상태와 맞춘다. 목록으로 돌아갈 때는 대기 중인 저장을 먼저 끝낸다.
+  useEffect(() => {
+    if (!profile?.category || workspaces.length === 0) return;
+
+    if (route.name === "poc") return;
+
+    if (route.name === "workspace") {
+      const routedWorkspace = workspaces.find((workspace) => workspace.id === route.workspaceId);
+      if (routedWorkspace) {
+        if (activeWorkspace?.id !== routedWorkspace.id) setActiveWorkspace(routedWorkspace);
+      } else {
+        navigateToWorkspaceList(true);
+      }
+      return;
+    }
+
+    if (activeWorkspace) void leaveWorkspace(false);
+    // 라우트 변화에만 반응한다. 저장 훅 객체와 leaveWorkspace는 렌더마다 새 참조가 된다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, profile?.category, workspaces, activeWorkspace?.id, navigateToWorkspaceList]);
 
   async function createWorkspace(name: string) {
     if (!profile?.category) return;
@@ -263,6 +298,7 @@ export function App() {
       const workspace = await repository.createWorkspace(profile.category, name);
       setWorkspaces((current) => [...current, workspace].sort((a, b) => a.createdAt - b.createdAt));
       setActiveWorkspace(workspace);
+      navigateToWorkspace(workspace.id);
     } catch (error) {
       console.error("[workspace] create failed", error);
       setUploadNotice({ tone: "error", title: "워크스페이스 생성 실패", description: "다시 시도해 주세요." });
@@ -424,6 +460,10 @@ export function App() {
     (pdfRow) => pdfRow.pdf && pdf.areasForPdfRow(pdfRow.id).length > 0,
   ).length;
 
+  if (route.name === "poc") {
+    return <PocPage onBack={() => navigateToWorkspaceList()} />;
+  }
+
   if (!SKIP_LOGIN && user === undefined) {
     return (
       <main className="authShell">
@@ -513,6 +553,17 @@ export function App() {
           </div>
         </div>
         <div className="workspaceSummary" aria-label="작업 현황">
+          {inactiveColumnCount > 0 ? (
+            <button
+              className="button inactiveColumnsButton"
+              type="button"
+              aria-pressed={showInactiveColumns}
+              onClick={() => setShowInactiveColumns((current) => !current)}
+            >
+              {showInactiveColumns ? <EyeOff size={16} /> : <Eye size={16} />}
+              {showInactiveColumns ? "비활성 열 숨기기" : `비활성 열 보기 (${inactiveColumnCount})`}
+            </button>
+          ) : null}
           <span>{sheet.rows.length}개 항목</span>
           <span>{sheet.columns.length}개 열</span>
           <span>{pdfRowsReady}/{pdfRowsWithFile} PDF</span>
@@ -562,17 +613,19 @@ export function App() {
           <div
             className="sheet"
             style={{
-              gridTemplateColumns: `${Math.round(220 * sheetZoom)}px ${sheet.columns
+              gridTemplateColumns: `${Math.round(220 * sheetZoom)}px ${displayedColumns
                 .map((column) => `${Math.round(getColumnWidth(column.id) * sheetZoom)}px`)
                 .join(" ")} minmax(${Math.round(160 * sheetZoom)}px, 1fr)`,
             }}
           >
             <SheetGrid
               rows={sheet.rows}
-              columns={sheet.columns}
+              columns={displayedColumns}
               busyId={busyId}
               selection={selection}
+              getColumnNumber={(columnId) => sheet.columns.findIndex((column) => column.id === columnId) + 1}
               onUpdateColumnName={sheet.updateColumnName}
+              onUpdateColumnActive={sheet.updateColumnActive}
               onCommitColumn={(columnId) => void sheet.commitColumn(columnId)}
               onDuplicateColumn={(column) => void duplicateColumn(column)}
               onDeleteColumn={(columnId) => void deleteColumn(columnId)}
@@ -593,7 +646,7 @@ export function App() {
             />
 
             <PdfMappingSection
-              columns={sheet.columns}
+              columns={displayedColumns}
               pdfRows={pdf.pdfRows}
               busyId={busyId}
               hasAreas={(pdfRowId) => pdf.areasForPdfRow(pdfRowId).length > 0}

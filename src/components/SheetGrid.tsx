@@ -12,7 +12,9 @@ type Props = {
   /** 열 복사 버튼 disabled 판정(복사 중인 열 id). */
   busyId?: string;
   selection: SheetSelectionController;
+  getColumnNumber: (columnId: string) => number;
   onUpdateColumnName: (columnId: string, name: string) => void;
+  onUpdateColumnActive: (columnId: string, isActive: boolean) => void;
   /** 열 문서(이름·셀 값 공용) 즉시 저장. 입력 blur/Enter 시 호출. */
   onCommitColumn: (columnId: string) => void;
   onDuplicateColumn: (column: ValueColumn) => void;
@@ -43,7 +45,9 @@ export function SheetGrid({
   columns,
   busyId,
   selection,
+  getColumnNumber,
   onUpdateColumnName,
+  onUpdateColumnActive,
   onCommitColumn,
   onDuplicateColumn,
   onDeleteColumn,
@@ -66,7 +70,13 @@ export function SheetGrid({
     <>
       <div className="sheetCell sheetHead stickyCol">항목</div>
       {columns.map((column) => (
-        <div className="sheetCell sheetHead columnHead" key={column.id}>
+        <div
+          className={`sheetCell sheetHead columnHead${column.isActive === false ? " inactiveColumn" : ""}`}
+          key={column.id}
+        >
+          <span className="columnNumber" aria-hidden="true">
+            {getColumnNumber(column.id)}.
+          </span>
           <GridTextInput
             value={column.name}
             ariaLabel="열 이름"
@@ -86,6 +96,15 @@ export function SheetGrid({
               <Trash2 size={15} />
             </button>
           </div>
+          <label className="columnActiveSwitch" title={column.isActive === false ? "열 활성화" : "열 비활성화"}>
+            <input
+              type="checkbox"
+              checked={column.isActive !== false}
+              aria-label={`${column.name} 열 활성 상태`}
+              onChange={(event) => onUpdateColumnActive(column.id, event.target.checked)}
+            />
+            <span aria-hidden="true" />
+          </label>
           <div
             className="columnResizeHandle"
             role="separator"

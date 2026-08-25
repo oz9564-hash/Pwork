@@ -29,6 +29,8 @@ export type FieldRow = {
 export type ValueColumn = {
   id: string;
   name: string;
+  /** false면 기본 표와 PDF 매핑 영역에서 숨긴다. 기존 데이터는 undefined=true로 취급한다. */
+  isActive?: boolean;
   values: Record<string, string>;
   images?: Record<string, CellImageAsset>;
   createdAt: number;

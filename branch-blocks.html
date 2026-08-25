@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>블록으로 배우는 Git 브랜치</title>
+<style>
+  :root{
+    --paper:#F2F4F1;
+    --ink:#242B33;
+    --ink-soft:#5C6670;
+    --line:#D9DED6;
+    --card:#FFFFFF;
+    --gray-hi:#A9B3BF; --gray-lo:#8E99A6; --gray-bd:#76818E;
+    --blue-hi:#6B96F2; --blue-lo:#4A7CE8; --blue-bd:#3563C9;
+    --orng-hi:#F5A65E; --orng-lo:#EE8F3C; --orng-bd:#CE7325;
+    --mono:"Cascadia Code","Consolas","D2Coding",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    min-height:100vh;
+    display:flex;flex-direction:column;align-items:center;
+    padding:36px 20px 48px;
+  }
+  header{max-width:860px;width:100%;text-align:center;margin-bottom:8px}
+  .eyebrow{
+    font-size:12px;letter-spacing:.22em;font-weight:700;
+    color:var(--ink-soft);text-transform:uppercase;
+  }
+  h1{font-size:clamp(22px,4vw,30px);font-weight:800;margin-top:6px;text-wrap:balance}
+  h1 .a{color:var(--blue-lo)} h1 .b{color:var(--orng-lo)}
+  .sub{color:var(--ink-soft);font-size:14px;margin-top:6px}
+
+  /* ---------- stage ---------- */
+  .stage{
+    position:relative;width:100%;max-width:860px;
+    height:470px;margin-top:20px;
+    border-bottom:3px solid var(--ink);
+  }
+  .col-label{
+    position:absolute;bottom:-46px;width:29%;
+    text-align:center;font-weight:700;font-size:14px;
+    transition:opacity .6s ease, transform .6s ease;
+  }
+  .col-label small{display:block;font-family:var(--mono);font-weight:400;font-size:11px;color:var(--ink-soft);margin-top:2px}
+  .col-label .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:1px}
+  .col-label.hidden-label{opacity:0;transform:translateY(8px)}
+
+  .block{
+    position:absolute;width:29%;height:46px;
+    border-radius:9px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:12.5px;font-weight:600;color:#fff;
+    text-shadow:0 1px 2px rgba(0,0,0,.25);
+    box-shadow:0 3px 0 rgba(0,0,0,.18), 0 6px 14px rgba(36,43,51,.12);
+    transition:left .7s cubic-bezier(.5,1.4,.4,1), bottom .7s cubic-bezier(.5,1.4,.4,1),
+               opacity .5s ease, transform .5s ease;
+    padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+  }
+  .block::after{ /* top shine, toy-block feel */
+    content:"";position:absolute;left:8%;right:8%;top:5px;height:8px;
+    border-radius:6px;background:rgba(255,255,255,.28);
+  }
+  .block.gray{background:linear-gradient(180deg,var(--gray-hi),var(--gray-lo));border:1.5px solid var(--gray-bd)}
+  .block.blue{background:linear-gradient(180deg,var(--blue-hi),var(--blue-lo));border:1.5px solid var(--blue-bd)}
+  .block.orng{background:linear-gradient(180deg,var(--orng-hi),var(--orng-lo));border:1.5px solid var(--orng-bd)}
+  .block.ghost{opacity:.38;box-shadow:none}
+  .block.trace{ /* dashed outline left on the branch after merge */
+    background:transparent;border:2px dashed currentColor;box-shadow:none;
+    color:var(--blue-lo);text-shadow:none;font-weight:500;
+  }
+  .block.trace.orng-trace{color:var(--orng-lo)}
+  .block.trace::after{display:none}
+  .block.off{opacity:0;transform:translateY(-34px);pointer-events:none}
+
+  /* ---------- caption / controls ---------- */
+  .panel{
+    max-width:860px;width:100%;margin-top:70px;
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:20px 24px;box-shadow:0 4px 16px rgba(36,43,51,.06);
+  }
+  .step-tag{font-size:12px;font-weight:700;letter-spacing:.14em;color:var(--ink-soft)}
+  .panel h2{font-size:19px;font-weight:800;margin:6px 0 8px}
+  .panel p{font-size:14.5px;line-height:1.7;color:var(--ink);max-width:62ch}
+  .cmd{
+    display:inline-block;margin-top:12px;
+    font-family:var(--mono);font-size:13px;
+    background:var(--ink);color:#EAEFE8;
+    padding:6px 12px;border-radius:8px;
+  }
+  .controls{
+    max-width:860px;width:100%;margin-top:18px;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+  }
+  button{
+    font:inherit;font-weight:700;font-size:14px;
+    border:2px solid var(--ink);border-radius:10px;
+    background:var(--card);color:var(--ink);
+    padding:10px 20px;cursor:pointer;
+    box-shadow:0 2px 0 var(--ink);
+    transition:transform .12s ease, box-shadow .12s ease, opacity .2s;
+  }
+  button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 3px 0 var(--ink)}
+  button:active:not(:disabled){transform:translateY(1px);box-shadow:0 1px 0 var(--ink)}
+  button:focus-visible{outline:3px solid var(--blue-lo);outline-offset:2px}
+  button:disabled{opacity:.35;cursor:default}
+  #next{background:var(--ink);color:#fff}
+  .dots{display:flex;gap:9px}
+  .dots button{
+    width:13px;height:13px;padding:0;border-radius:50%;
+    border:2px solid var(--ink);box-shadow:none;background:var(--card);
+  }
+  .dots button[aria-current="true"]{background:var(--ink)}
+  .hint{max-width:860px;width:100%;text-align:center;color:var(--ink-soft);font-size:12px;margin-top:14px}
+  kbd{font-family:var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 5px;background:#fff}
+
+  @media (prefers-reduced-motion:reduce){
+    .block,.col-label,button{transition:none}
+  }
+  @media (max-width:560px){
+    .block{font-size:10.5px;height:40px}
+    .stage{height:420px}
+    .panel{padding:16px 18px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">GIT BRANCH, EXPLAINED WITH BLOCKS</div>
+  <h1>블록으로 배우는 브랜치 — <span class="a">A</span>와 <span class="b">B</span>는 어떻게 main에 합쳐질까?</h1>
+  <div class="sub">커밋 하나 = 블록 하나. 버튼을 눌러 한 단계씩 따라가 보세요.</div>
+</header>
+
+<div class="stage" id="stage" aria-label="브랜치 블록 시각화">
+  <div class="col-label hidden-label" id="labelA" style="left:2%">
+    <span class="dot" style="background:var(--blue-lo)"></span>A의 브랜치<small>feature-a</small>
+  </div>
+  <div class="col-label" id="labelM" style="left:35.5%">
+    <span class="dot" style="background:var(--gray-lo)"></span>main (원본)<small>main</small>
+  </div>
+  <div class="col-label hidden-label" id="labelB" style="left:69%">
+    <span class="dot" style="background:var(--orng-lo)"></span>B의 브랜치<small>feature-b</small>
+  </div>
+</div>
+
+<section class="panel" aria-live="polite">
+  <div class="step-tag" id="stepTag"></div>
+  <h2 id="stepTitle"></h2>
+  <p id="stepText"></p>
+  <span class="cmd" id="stepCmd"></span>
+</section>
+
+<div class="controls">
+  <button id="prev" type="button">← 이전</button>
+  <div class="dots" id="dots" role="tablist" aria-label="단계 이동"></div>
+  <button id="next" type="button">다음 →</button>
+</div>
+<div class="hint">키보드 <kbd>←</kbd> <kbd>→</kbd> 로도 넘길 수 있어요</div>
+
+<script>
+(function(){
+  // column left positions (%) : 0 = A branch, 1 = main, 2 = B branch
+  var COLX = ['2%','35.5%','69%'];
+  var STEP_H = 56;           // vertical distance per level (px)
+
+  // per-block state for each of the 6 steps.
+  // null = hidden. {c:column, l:level, g:ghost, t:trace, d:transition delay(s)}
+  function same(s){ return [s,s,s,s,s,s]; }
+  var BLOCKS = [
+    {id:'m1', cls:'gray', label:'프로젝트 시작',    st: same({c:1,l:0})},
+    {id:'m2', cls:'gray', label:'메인 화면',        st: same({c:1,l:1})},
+    {id:'m3', cls:'gray', label:'회원가입',          st: same({c:1,l:2})},
+
+    // translucent copies that appear when branches are created
+    {id:'ga1',cls:'gray', label:'프로젝트 시작', st:[null,{c:0,l:0,g:1},{c:0,l:0,g:1},{c:0,l:0,g:1},{c:0,l:0,g:1},{c:0,l:0,g:1}]},
+    {id:'ga2',cls:'gray', label:'메인 화면',     st:[null,{c:0,l:1,g:1,d:.08},{c:0,l:1,g:1},{c:0,l:1,g:1},{c:0,l:1,g:1},{c:0,l:1,g:1}]},
+    {id:'ga3',cls:'gray', label:'회원가입',      st:[null,{c:0,l:2,g:1,d:.16},{c:0,l:2,g:1},{c:0,l:2,g:1},{c:0,l:2,g:1},{c:0,l:2,g:1}]},
+    {id:'gb1',cls:'gray', label:'프로젝트 시작', st:[null,{c:2,l:0,g:1},{c:2,l:0,g:1},{c:2,l:0,g:1},{c:2,l:0,g:1},{c:2,l:0,g:1}]},
+    {id:'gb2',cls:'gray', label:'메인 화면',     st:[null,{c:2,l:1,g:1,d:.08},{c:2,l:1,g:1},{c:2,l:1,g:1},{c:2,l:1,g:1},{c:2,l:1,g:1}]},
+    {id:'gb3',cls:'gray', label:'회원가입',      st:[null,{c:2,l:2,g:1,d:.16},{c:2,l:2,g:1},{c:2,l:2,g:1},{c:2,l:2,g:1},{c:2,l:2,g:1}]},
+
+    // A's work — blue blocks
+    {id:'a1', cls:'blue', label:'A1 · 로그인 버튼', st:[null,null,{c:0,l:3},{c:0,l:3},{c:1,l:3},{c:1,l:3}]},
+    {id:'a2', cls:'blue', label:'A2 · 로그인 API',  st:[null,null,{c:0,l:4,d:.2},{c:0,l:4},{c:1,l:4,d:.2},{c:1,l:4}]},
+
+    // B's work — orange blocks
+    {id:'b1', cls:'orng', label:'B1 · 다크 모드',   st:[null,null,null,{c:2,l:3},{c:2,l:3},{c:1,l:5}]},
+    {id:'b2', cls:'orng', label:'B2 · 알림 기능',   st:[null,null,null,{c:2,l:4,d:.2},{c:2,l:4},{c:1,l:6,d:.2}]},
+
+    // dashed traces left on the branch after merge (the branch keeps its commits)
+    {id:'ta1',cls:'trace',           label:'main으로 합쳐짐', st:[null,null,null,null,{c:0,l:3,t:1},{c:0,l:3,t:1}]},
+    {id:'ta2',cls:'trace',           label:'main으로 합쳐짐', st:[null,null,null,null,{c:0,l:4,t:1,d:.2},{c:0,l:4,t:1}]},
+    {id:'tb1',cls:'trace orng-trace',label:'main으로 합쳐짐', st:[null,null,null,null,null,{c:2,l:3,t:1}]},
+    {id:'tb2',cls:'trace orng-trace',label:'main으로 합쳐짐', st:[null,null,null,null,null,{c:2,l:4,t:1,d:.2}]}
+  ];
+
+  var STEPS = [
+    {tag:'STEP 1 / 6', title:'main — 모두가 공유하는 원본',
+     text:'지금까지의 작업은 전부 main이라는 블록 탑에 쌓여 있어요. 이 탑이 우리 서비스의 "진짜" 코드예요. 여기에 바로 블록을 올리면 실수가 그대로 서비스에 반영되겠죠?',
+     cmd:'main'},
+    {tag:'STEP 2 / 6', title:'브랜치 생성 — 원본을 그대로 복사',
+     text:'A와 B가 각자 브랜치를 만들었어요. 브랜치를 만들면 그 순간의 main 탑이 통째로 복사돼요(반투명 블록). 원본은 건드리지 않고, 각자 자기 복사본 위에서 작업할 수 있게 된 거예요.',
+     cmd:'git switch -c feature-a'},
+    {tag:'STEP 3 / 6', title:'A가 커밋 — 파란 블록이 쌓인다',
+     text:'A가 로그인 기능을 만들면서 커밋을 두 번 했어요. 커밋 하나가 파란 블록 하나예요. 잘 보세요 — 파란 블록은 A의 브랜치에만 쌓이고, 가운데 main 탑은 그대로예요.',
+     cmd:'git commit -m "로그인 버튼 추가"'},
+    {tag:'STEP 4 / 6', title:'B도 커밋 — 주황 블록이 쌓인다',
+     text:'같은 시간에 B는 다크 모드와 알림 기능을 만들고 있어요. B의 주황 블록도 B의 브랜치에만 쌓여요. 두 사람은 서로의 작업을 전혀 방해하지 않아요. 이게 브랜치를 쓰는 이유예요.',
+     cmd:'git commit -m "다크 모드 추가"'},
+    {tag:'STEP 5 / 6', title:'A를 merge — 파란 블록이 main으로',
+     text:'A의 작업이 끝나서 main에 합쳐요(merge). 파란 블록 두 개가 main 탑 위로 올라가 쌓였죠? 이제 main에는 A의 작업이 포함됐어요. A 브랜치 쪽 점선은 "이 블록은 main에 반영됐다"는 표시예요.',
+     cmd:'git merge feature-a'},
+    {tag:'STEP 6 / 6', title:'B도 merge — 완성된 main',
+     text:'B의 주황 블록도 main 위에 쌓였어요. 최종 main 탑을 보세요 — 회색(원래 있던 것) + 파랑(A의 작업) + 주황(B의 작업). merge란 결국 각자 쌓은 색깔 블록을 원본 탑 위에 순서대로 합치는 일이에요.',
+     cmd:'git merge feature-b'}
+  ];
+
+  var stage = document.getElementById('stage');
+  var els = {};
+  BLOCKS.forEach(function(b){
+    var d = document.createElement('div');
+    d.className = 'block ' + b.cls + ' off';
+    d.textContent = b.label;
+    stage.appendChild(d);
+    els[b.id] = d;
+  });
+
+  var dotsWrap = document.getElementById('dots');
+  STEPS.forEach(function(s,i){
+    var d = document.createElement('button');
+    d.type = 'button';
+    d.setAttribute('aria-label', (i+1) + '단계로 이동');
+    d.addEventListener('click', function(){ go(i); });
+    dotsWrap.appendChild(d);
+  });
+
+  var cur = 0;
+  function go(step){
+    cur = Math.max(0, Math.min(STEPS.length-1, step));
+
+    BLOCKS.forEach(function(b){
+      var s = b.st[cur], el = els[b.id];
+      el.style.transitionDelay = (s && s.d ? s.d : 0) + 's';
+      if (!s){
+        el.classList.add('off');
+        el.classList.remove('ghost');
+      } else {
+        el.style.left = COLX[s.c];
+        el.style.bottom = (s.l * STEP_H) + 'px';
+        el.classList.remove('off');
+        el.classList.toggle('ghost', !!s.g);
+      }
+    });
+
+    document.getElementById('labelA').classList.toggle('hidden-label', cur < 1);
+    document.getElementById('labelB').classList.toggle('hidden-label', cur < 1);
+
+    var s = STEPS[cur];
+    document.getElementById('stepTag').textContent = s.tag;
+    document.getElementById('stepTitle').textContent = s.title;
+    document.getElementById('stepText').textContent = s.text;
+    document.getElementById('stepCmd').textContent = s.cmd;
+
+    document.getElementById('prev').disabled = (cur === 0);
+    document.getElementById('next').disabled = (cur === STEPS.length-1);
+    Array.prototype.forEach.call(dotsWrap.children, function(d,i){
+      d.setAttribute('aria-current', i === cur ? 'true' : 'false');
+    });
+  }
+
+  document.getElementById('prev').addEventListener('click', function(){ go(cur-1); });
+  document.getElementById('next').addEventListener('click', function(){ go(cur+1); });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight') go(cur+1);
+    if (e.key === 'ArrowLeft') go(cur-1);
+  });
+
+  go(0);
+})();
+</script>
+</body>
+</html>
